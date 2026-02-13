@@ -1,0 +1,12 @@
+# Build outputs
+*.exe
+dist/
+*.syso
+
+# Go test / build caches
+*.test
+*.out
+
+# IDE/OS noise
+.DS_Store
+Thumbs.db
