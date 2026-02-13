@@ -130,7 +130,7 @@ func (a *installerApp) run() error {
 			Label{AssignTo: &a.status, Text: "Idle"},
 			TextEdit{AssignTo: &a.logView, ReadOnly: true, VScroll: true},
 			LinkLabel{
-				Text: `Credits: <a id="bts" href="https://github.com/mrpond/BlockTheSpot">BlockTheSpot (mrpond)</a> | <a id="installer" href="https://github.com/Nuzair46/BlockTheSpot-Installer">BlockTheSpot Installer (Nuzair46)</a>`,
+				Text: `Credits: <a id="bts" href="https://github.com/mrpond/BlockTheSpot">BlockTheSpot (mrpond)</a> | <a id="installer" href="https://github.com/Nuzair46/BlockTheSpot-Installer">BlockTheSpot Installer (Nuzair46)</a> | <a id="discord" href="https://discord.gg/eYudMwgYtY">Discord Server</a>`,
 				OnLinkActivated: func(link *walk.LinkLabelLink) {
 					_ = openExternalURL(link.URL())
 				},
