@@ -18,6 +18,8 @@ jobs:
   build:
     name: Build Windows Installer
     runs-on: windows-latest
+    env:
+      INSTALLER_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
 
     steps:
       - name: Checkout
@@ -37,13 +39,13 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-      - name: Generate Windows icon resource
-        run: go run github.com/akavel/rsrc@v0.10.2 -ico assets/blockthespot.ico -arch amd64 -o windows_icon_resource_amd64.syso
+      - name: Generate Windows app resources
+        run: go run github.com/akavel/rsrc@v0.10.2 -manifest assets/app.manifest -ico assets/blockthespot.ico -arch amd64 -o windows_app_resources_amd64.syso
 
       - name: Build installer
         run: |
           mkdir dist
-          go build -trimpath -ldflags "-s -w" -o dist/BlockTheSpotInstaller.exe .
+          go build -trimpath -ldflags "-H=windowsgui -s -w -X main.installerVersion=$env:INSTALLER_VERSION" -o dist/BlockTheSpotInstaller.exe .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

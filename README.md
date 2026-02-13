@@ -11,30 +11,39 @@ Official installer for [BlockTheSpot](https://github.com/mrpond/BlockTheSpot).
 1. Download latest [BlockTheSpotInstaller.exe](https://github.com/Nuzair46/BlockTheSpot-installer/releases/latest/download/BlockTheSpotInstaller.exe).
 2. Close Spotify if it is running.
 3. Run `BlockTheSpotInstaller.exe`.
-4. In the installer window, keep defaults unless you need to change them:
-   - `Uninstall Microsoft Store Spotify if detected` should usually stay enabled.
-   - Enable `Update or reinstall Spotify before patching` if your Spotify install is missing/outdated.
-5. Click `Install / Patch`.
-6. Wait for completion and launch Spotify.
+4. Choose one action:
+   - `Install / Patch` to install or update BlockTheSpot.
+   - `Uninstall / Restore` to remove BlockTheSpot and restore original `chrome_elf.dll` when backup exists.
+5. Enable `Update or reinstall Spotify before patching` when you want to refresh Spotify before patching.
+6. If `Launch Spotify and close installer after completion` is enabled, Spotify starts and the installer closes automatically.
 
 ## Development
 
 ### Prerequisite (before local build)
 
-Generate the Windows icon resource object:
+Generate the Windows app resources object (required for `walk`):
 
 ```bash
-go run github.com/akavel/rsrc@v0.10.2 -ico assets/blockthespot.ico -arch amd64 -o windows_icon_resource_amd64.syso
+go run github.com/akavel/rsrc@v0.10.2 -manifest assets/app.manifest -ico assets/blockthespot.ico -arch amd64 -o windows_app_resources_amd64.syso
 ```
 
 ### Build locally (on Windows)
 
 ```powershell
-go build -o BlockTheSpotInstaller.exe .
+go build -trimpath -ldflags="-H=windowsgui -X main.installerVersion=v1.0.0" -o BlockTheSpotInstaller.exe .
 ```
 
 ### Cross-build from Linux/macOS
 
 ```bash
-GOOS=windows GOARCH=amd64 go build -o BlockTheSpotInstaller.exe .
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-H=windowsgui -X main.installerVersion=v1.0.0" -o BlockTheSpotInstaller.exe .
+```
+
+### If you update the icon PNG
+
+Rebuild the `.ico`, then regenerate app resources:
+
+```bash
+convert assets/blockthespot.png -define icon:auto-resize=256,128,64,48,32,16 assets/blockthespot.ico
+go run github.com/akavel/rsrc@v0.10.2 -manifest assets/app.manifest -ico assets/blockthespot.ico -arch amd64 -o windows_app_resources_amd64.syso
 ```

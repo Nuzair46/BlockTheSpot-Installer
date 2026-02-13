@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lxn/walk"
@@ -23,14 +26,24 @@ const (
 	releaseChromeURL = "https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.dll"
 	releaseBlockURL  = "https://github.com/mrpond/BlockTheSpot/releases/latest/download/blockthespot.dll"
 	configURL        = "https://raw.githubusercontent.com/mrpond/BlockTheSpot/master/config.ini"
+
+	installerLatestReleaseAPI = "https://api.github.com/repos/Nuzair46/BlockTheSpot-Installer/releases/latest"
+	installerReleasesURL      = "https://github.com/Nuzair46/BlockTheSpot-Installer/releases/latest"
 )
 
+var installerVersion = "dev"
+
 type installOptions struct {
-	SpotifyDir          string
 	UpdateSpotify       bool
-	UninstallStore      bool
 	LaunchSpotifyOnDone bool
 }
+
+type operationMode int
+
+const (
+	operationInstall operationMode = iota
+	operationUninstall
+)
 
 type installer struct {
 	options          installOptions
@@ -41,56 +54,102 @@ type installer struct {
 	setStatus        func(status string)
 }
 
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+	HTMLURL string `json:"html_url"`
+}
+
 type installerApp struct {
-	mw             *walk.MainWindow
-	spotifyPath    *walk.LineEdit
-	updateCheck    *walk.CheckBox
-	uninstallCheck *walk.CheckBox
-	launchCheck    *walk.CheckBox
-	progress       *walk.ProgressBar
-	status         *walk.Label
-	logView        *walk.TextEdit
-	runButton      *walk.PushButton
+	mw              *walk.MainWindow
+	logoView        *walk.ImageView
+	updateInfo      *walk.LinkLabel
+	updateCheck     *walk.CheckBox
+	launchCheck     *walk.CheckBox
+	progress        *walk.ProgressBar
+	status          *walk.Label
+	logView         *walk.TextEdit
+	installButton   *walk.PushButton
+	uninstallButton *walk.PushButton
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			details := fmt.Sprintf("Unhandled panic: %v\r\n\r\n%s", r, string(debug.Stack()))
+			reportFatalError(details)
+			os.Exit(1)
+		}
+	}()
+
 	app := &installerApp{}
 	if err := app.run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		reportFatalError(err.Error())
 		os.Exit(1)
 	}
 }
 
 func (a *installerApp) run() error {
-	spotifyDir := defaultSpotifyDir()
+	appIcon, _ := loadAppIcon()
 
 	if err := (MainWindow{
 		AssignTo: &a.mw,
-		Title:    "BlockTheSpot Installer (Windows x64)",
+		Title:    "BlockTheSpot Installer",
+		Icon:     appIcon,
+		Size:     Size{Width: 760, Height: 560},
 		MinSize:  Size{Width: 760, Height: 560},
 		Layout:   VBox{},
 		Children: []Widget{
 			Composite{
-				Layout: Grid{Columns: 2},
+				Layout: HBox{},
 				Children: []Widget{
-					Label{Text: "Spotify directory:"},
-					LineEdit{AssignTo: &a.spotifyPath, Text: spotifyDir, ReadOnly: true},
+					ImageView{
+						AssignTo: &a.logoView,
+						MinSize:  Size{Width: 56, Height: 56},
+						MaxSize:  Size{Width: 56, Height: 56},
+						Mode:     ImageViewModeZoom,
+					},
+					Composite{
+						Layout: VBox{},
+						Children: []Widget{
+							TextLabel{Text: "BlockTheSpot Installer"},
+							TextLabel{Text: "Windows x64 Spotify patch installer"},
+						},
+					},
+				},
+			},
+			LinkLabel{
+				AssignTo: &a.updateInfo,
+				Text:     "Installer version: checking for updates...",
+				OnLinkActivated: func(link *walk.LinkLabelLink) {
+					_ = openExternalURL(link.URL())
 				},
 			},
 			CheckBox{AssignTo: &a.updateCheck, Text: "Update or reinstall Spotify before patching", Checked: false},
-			CheckBox{AssignTo: &a.uninstallCheck, Text: "Uninstall Microsoft Store Spotify if detected", Checked: true},
-			CheckBox{AssignTo: &a.launchCheck, Text: "Launch Spotify after install", Checked: true},
+			CheckBox{AssignTo: &a.launchCheck, Text: "Launch Spotify and close installer after completion", Checked: true},
 			ProgressBar{AssignTo: &a.progress, MinValue: 0, MaxValue: 100},
 			Label{AssignTo: &a.status, Text: "Idle"},
 			TextEdit{AssignTo: &a.logView, ReadOnly: true, VScroll: true},
+			LinkLabel{
+				Text: `Credits: <a id="bts" href="https://github.com/mrpond/BlockTheSpot">BlockTheSpot (mrpond)</a> | <a id="installer" href="https://github.com/Nuzair46/BlockTheSpot-Installer">BlockTheSpot Installer (Nuzair46)</a>`,
+				OnLinkActivated: func(link *walk.LinkLabelLink) {
+					_ = openExternalURL(link.URL())
+				},
+			},
 			Composite{
 				Layout: HBox{Alignment: AlignHFarVCenter},
 				Children: []Widget{
 					PushButton{
-						AssignTo: &a.runButton,
+						AssignTo: &a.installButton,
 						Text:     "Install / Patch",
 						OnClicked: func() {
 							a.startInstall()
+						},
+					},
+					PushButton{
+						AssignTo: &a.uninstallButton,
+						Text:     "Uninstall / Restore",
+						OnClicked: func() {
+							a.startUninstall()
 						},
 					},
 					PushButton{Text: "Exit", OnClicked: func() { a.mw.Close() }},
@@ -101,22 +160,64 @@ func (a *installerApp) run() error {
 		return err
 	}
 
+	if appIcon != nil && a.logoView != nil {
+		_ = a.logoView.SetImage(appIcon)
+	}
+	a.setUpdateInfo(fmt.Sprintf("Installer version: %s", installerVersion))
+	go a.checkForInstallerUpdate()
+
 	a.mw.Run()
 	return nil
 }
 
+func reportFatalError(details string) {
+	logPath, err := writeStartupErrorLog(details)
+	msg := details
+	if err == nil {
+		msg += "\r\n\r\nLog file:\r\n" + logPath
+	}
+
+	fmt.Fprintln(os.Stderr, details)
+	_ = walk.MsgBox(nil, "BlockTheSpot Installer Error", msg, walk.MsgBoxOK|walk.MsgBoxIconError)
+}
+
+func writeStartupErrorLog(details string) (string, error) {
+	dir := filepath.Join(os.TempDir(), "BlockTheSpotInstaller")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+
+	filename := fmt.Sprintf("startup-error-%s.log", time.Now().Format("20060102-150405"))
+	path := filepath.Join(dir, filename)
+	content := fmt.Sprintf("[%s] %s\r\n", time.Now().Format(time.RFC3339), details)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func (a *installerApp) startInstall() {
+	a.startOperation(operationInstall)
+}
+
+func (a *installerApp) startUninstall() {
+	a.startOperation(operationUninstall)
+}
+
+func (a *installerApp) startOperation(mode operationMode) {
 	opts := installOptions{
-		SpotifyDir:          strings.TrimSpace(a.spotifyPath.Text()),
 		UpdateSpotify:       a.updateCheck.Checked(),
-		UninstallStore:      a.uninstallCheck.Checked(),
 		LaunchSpotifyOnDone: a.launchCheck.Checked(),
 	}
 
 	a.setBusy(true)
 	a.setProgressSafe(0)
 	a.setStatusSafe("Starting")
-	a.logfSafe("Starting installer.")
+	if mode == operationUninstall {
+		a.logfSafe("Starting uninstaller.")
+	} else {
+		a.logfSafe("Starting installer.")
+	}
 
 	go func() {
 		ins := installer{
@@ -126,7 +227,12 @@ func (a *installerApp) startInstall() {
 			setStatus:   a.setStatusSafe,
 		}
 
-		err := ins.run()
+		var err error
+		if mode == operationUninstall {
+			err = ins.runUninstall()
+		} else {
+			err = ins.runInstall()
+		}
 
 		a.mw.Synchronize(func() {
 			a.setBusy(false)
@@ -138,15 +244,17 @@ func (a *installerApp) startInstall() {
 
 			a.progress.SetValue(100)
 			a.status.SetText("Completed")
-			walk.MsgBox(a.mw, "Completed", "Spotify patching completed.", walk.MsgBoxIconInformation)
+			if opts.LaunchSpotifyOnDone {
+				a.mw.Close()
+			}
 		})
 	}()
 }
 
 func (a *installerApp) setBusy(busy bool) {
-	a.runButton.SetEnabled(!busy)
+	a.installButton.SetEnabled(!busy)
+	a.uninstallButton.SetEnabled(!busy)
 	a.updateCheck.SetEnabled(!busy)
-	a.uninstallCheck.SetEnabled(!busy)
 	a.launchCheck.SetEnabled(!busy)
 }
 
@@ -183,7 +291,43 @@ func (a *installerApp) setStatusSafe(status string) {
 	})
 }
 
-func (i *installer) run() error {
+func (a *installerApp) setUpdateInfo(text string) {
+	if a.updateInfo == nil {
+		return
+	}
+
+	a.mw.Synchronize(func() {
+		_ = a.updateInfo.SetText(text)
+	})
+}
+
+func (a *installerApp) checkForInstallerUpdate() {
+	release, err := fetchLatestInstallerRelease()
+	if err != nil {
+		a.setUpdateInfo(fmt.Sprintf("Installer version: %s (update check unavailable)", installerVersion))
+		return
+	}
+
+	cmp, err := compareInstallerVersion(installerVersion, release.TagName)
+	if err != nil {
+		a.setUpdateInfo(fmt.Sprintf("Installer version: %s (latest: %s)", installerVersion, release.TagName))
+		return
+	}
+
+	if cmp < 0 {
+		a.setUpdateInfo(fmt.Sprintf(`Update available: <a href="%s">%s</a> (current %s)`, release.HTMLURL, release.TagName, installerVersion))
+		return
+	}
+
+	a.setUpdateInfo(fmt.Sprintf("Installer is up to date (%s)", installerVersion))
+}
+
+func (i *installer) runInstall() error {
+	spotifyDir := defaultSpotifyDir()
+	if spotifyDir == "" {
+		return errors.New("unable to determine Spotify directory")
+	}
+
 	i.setStatus("Stopping Spotify")
 	i.setProgress(5)
 	i.logf("Stopping Spotify processes.")
@@ -196,10 +340,6 @@ func (i *installer) run() error {
 		i.logf("Warning: failed to check Microsoft Store Spotify: %v", err)
 	} else if storeInstalled {
 		i.logf("Microsoft Store Spotify detected.")
-		if !i.options.UninstallStore {
-			return errors.New("Microsoft Store Spotify is installed. Enable uninstall option and run again")
-		}
-
 		i.logf("Uninstalling Microsoft Store Spotify.")
 		if err := uninstallSpotifyStore(); err != nil {
 			return fmt.Errorf("failed to uninstall Microsoft Store Spotify: %w", err)
@@ -216,24 +356,42 @@ func (i *installer) run() error {
 	}
 	i.logf("Minimum supported Spotify version from config.ini: %s", i.minimumVersion)
 
-	spotifyExe := filepath.Join(i.options.SpotifyDir, "Spotify.exe")
+	spotifyExe := filepath.Join(spotifyDir, "Spotify.exe")
 	spotifyInstalled := fileExists(spotifyExe)
-	unsupportedVersion := true
+	detectedVersion := ""
+	unsupportedVersion := false
 	if spotifyInstalled {
 		v, err := getSpotifyVersion(spotifyExe)
 		if err != nil {
 			i.logf("Warning: unable to read Spotify version: %v", err)
 		} else {
+			detectedVersion = v
 			i.logf("Detected Spotify version: %s", v)
 			unsupportedVersion = compareVersion(v, i.minimumVersion) < 0
 		}
 	}
 
-	needsInstall := !spotifyInstalled || i.options.UpdateSpotify || unsupportedVersion
+	if unsupportedVersion {
+		i.logf(
+			"Spotify version %s is below supported minimum %s",
+			detectedVersion,
+			i.minimumVersion,
+		)
+	}
+
+	if unsupportedVersion && !i.options.UpdateSpotify {
+		return fmt.Errorf(
+			"Spotify version %s is below supported minimum %s. Enable 'Update or reinstall Spotify before patching' and run again",
+			detectedVersion,
+			i.minimumVersion,
+		)
+	}
+
+	needsInstall := !spotifyInstalled || i.options.UpdateSpotify
 	if needsInstall {
 		i.setStatus("Installing Spotify")
 		i.setProgress(20)
-		if err := os.MkdirAll(i.options.SpotifyDir, 0o755); err != nil {
+		if err := os.MkdirAll(spotifyDir, 0o755); err != nil {
 			return fmt.Errorf("failed to prepare Spotify directory: %w", err)
 		}
 
@@ -246,21 +404,100 @@ func (i *installer) run() error {
 	}
 
 	i.setStatus("Applying BlockTheSpot files")
-	if err := i.patchSpotify(); err != nil {
+	if err := i.patchSpotify(spotifyDir); err != nil {
 		return err
 	}
 
 	if i.options.LaunchSpotifyOnDone {
 		i.setStatus("Launching Spotify")
 		i.logf("Starting Spotify.")
-		if err := startSpotify(spotifyExe, i.options.SpotifyDir); err != nil {
+		if err := startSpotify(spotifyExe, spotifyDir); err != nil {
 			return fmt.Errorf("failed to launch Spotify: %w", err)
+		}
+		time.Sleep(2 * time.Second)
+		running, err := processRunning("Spotify.exe")
+		if err == nil && !running {
+			return errors.New("Spotify did not stay running after patch. Re-run install and ensure Spotify can start normally")
 		}
 	}
 
 	i.setStatus("Completed")
 	i.logf("Install finished successfully.")
 	i.setProgress(100)
+	return nil
+}
+
+func (i *installer) runUninstall() error {
+	spotifyDir := defaultSpotifyDir()
+	if spotifyDir == "" {
+		return errors.New("unable to determine Spotify directory")
+	}
+
+	spotifyExe := filepath.Join(spotifyDir, "Spotify.exe")
+	requiredPath := filepath.Join(spotifyDir, "chrome_elf_required.dll")
+	chromePath := filepath.Join(spotifyDir, "chrome_elf.dll")
+	blockPath := filepath.Join(spotifyDir, "blockthespot.dll")
+	configPath := filepath.Join(spotifyDir, "config.ini")
+
+	i.setStatus("Stopping Spotify")
+	i.setProgress(5)
+	i.logf("Stopping Spotify processes.")
+	stopSpotifyProcesses()
+
+	i.setStatus("Removing BlockTheSpot files")
+	i.setProgress(25)
+	if fileExists(blockPath) {
+		if err := os.Remove(blockPath); err != nil {
+			return fmt.Errorf("failed to delete blockthespot.dll: %w", err)
+		}
+		i.logf("Removed blockthespot.dll.")
+	} else {
+		i.logf("blockthespot.dll not found.")
+	}
+
+	if fileExists(configPath) {
+		if err := os.Remove(configPath); err != nil {
+			return fmt.Errorf("failed to delete config.ini: %w", err)
+		}
+		i.logf("Removed config.ini.")
+	} else {
+		i.logf("config.ini not found.")
+	}
+
+	i.setStatus("Restoring chrome_elf.dll")
+	i.setProgress(60)
+	if fileExists(requiredPath) {
+		if fileExists(chromePath) {
+			if err := os.Remove(chromePath); err != nil {
+				return fmt.Errorf("failed to delete patched chrome_elf.dll: %w", err)
+			}
+			i.logf("Removed patched chrome_elf.dll.")
+		}
+
+		if err := os.Rename(requiredPath, chromePath); err != nil {
+			return fmt.Errorf("failed to restore original chrome_elf.dll: %w", err)
+		}
+		i.logf("Restored original chrome_elf.dll.")
+	} else {
+		i.logf("chrome_elf_required.dll backup not found; restore skipped.")
+	}
+
+	if i.options.LaunchSpotifyOnDone {
+		i.setStatus("Launching Spotify")
+		i.setProgress(90)
+		if fileExists(spotifyExe) {
+			i.logf("Starting Spotify.")
+			if err := startSpotify(spotifyExe, spotifyDir); err != nil {
+				return fmt.Errorf("failed to launch Spotify: %w", err)
+			}
+		} else {
+			i.logf("Spotify.exe not found; skipping launch.")
+		}
+	}
+
+	i.setStatus("Completed")
+	i.setProgress(100)
+	i.logf("Uninstall/restore finished successfully.")
 	return nil
 }
 
@@ -306,8 +543,7 @@ func (i *installer) installSpotify(spotifyExe string) error {
 	return nil
 }
 
-func (i *installer) patchSpotify() error {
-	spotifyDir := i.options.SpotifyDir
+func (i *installer) patchSpotify(spotifyDir string) error {
 	requiredPath := filepath.Join(spotifyDir, "chrome_elf_required.dll")
 	chromePath := filepath.Join(spotifyDir, "chrome_elf.dll")
 	blockPath := filepath.Join(spotifyDir, "blockthespot.dll")
@@ -357,6 +593,28 @@ func startSpotify(exePath, workingDir string) error {
 	return cmd.Start()
 }
 
+func loadAppIcon() (*walk.Icon, error) {
+	if icon, err := walk.NewIconFromResourceId(1); err == nil {
+		return icon, nil
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return walk.NewIconExtractedFromFileWithSize(exePath, 0, 64)
+}
+
+func openExternalURL(url string) error {
+	return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+}
+
+func hiddenCommand(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return cmd
+}
+
 func launchDetached(filePath string) error {
 	cmd := exec.Command(filePath)
 	if err := cmd.Start(); err != nil {
@@ -379,6 +637,104 @@ func (i *installer) loadConfig() error {
 	i.minimumVersion = version
 	i.downloadedConfig = body
 	return nil
+}
+
+func fetchLatestInstallerRelease() (githubRelease, error) {
+	req, err := http.NewRequest(http.MethodGet, installerLatestReleaseAPI, nil)
+	if err != nil {
+		return githubRelease{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "BlockTheSpotInstaller/"+installerVersion)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return githubRelease{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return githubRelease{}, fmt.Errorf("unexpected HTTP status %s", resp.Status)
+	}
+
+	var rel githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return githubRelease{}, err
+	}
+	if strings.TrimSpace(rel.TagName) == "" {
+		return githubRelease{}, errors.New("latest release has no tag")
+	}
+	if strings.TrimSpace(rel.HTMLURL) == "" {
+		rel.HTMLURL = installerReleasesURL
+	}
+	return rel, nil
+}
+
+func compareInstallerVersion(current, latest string) (int, error) {
+	cv, err := parseInstallerVersion(current)
+	if err != nil {
+		return 0, err
+	}
+	lv, err := parseInstallerVersion(latest)
+	if err != nil {
+		return 0, err
+	}
+
+	maxLen := len(cv)
+	if len(lv) > maxLen {
+		maxLen = len(lv)
+	}
+	for len(cv) < maxLen {
+		cv = append(cv, 0)
+	}
+	for len(lv) < maxLen {
+		lv = append(lv, 0)
+	}
+
+	for idx := 0; idx < maxLen; idx++ {
+		if cv[idx] < lv[idx] {
+			return -1, nil
+		}
+		if cv[idx] > lv[idx] {
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func parseInstallerVersion(value string) ([]int, error) {
+	clean := strings.TrimSpace(value)
+	clean = strings.TrimPrefix(clean, "v")
+	if clean == "" {
+		return nil, errors.New("empty version")
+	}
+	if strings.EqualFold(clean, "dev") {
+		return nil, errors.New("dev build has no comparable release version")
+	}
+
+	if dash := strings.Index(clean, "-"); dash >= 0 {
+		clean = clean[:dash]
+	}
+
+	parts := strings.Split(clean, ".")
+	if len(parts) == 0 {
+		return nil, errors.New("invalid version")
+	}
+
+	parsed := make([]int, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, errors.New("invalid version component")
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, err
+		}
+		parsed = append(parsed, n)
+	}
+	return parsed, nil
 }
 
 func downloadFile(url, targetPath string) error {
@@ -484,13 +840,13 @@ func looksLikeSpotifyVersion(value string) bool {
 func stopSpotifyProcesses() {
 	processes := []string{"Spotify.exe", "SpotifyWebHelper.exe", "SpotifyFullSetup.exe", "SpotifyFullSetupX64.exe"}
 	for _, name := range processes {
-		_ = exec.Command("taskkill", "/IM", name, "/F").Run()
+		_ = hiddenCommand("taskkill", "/IM", name, "/F").Run()
 	}
 }
 
 func isSpotifyStoreInstalled() (bool, error) {
 	script := "$pkg = Get-AppxPackage -Name SpotifyAB.SpotifyMusic -ErrorAction SilentlyContinue; if ($pkg) { '1' } else { '0' }"
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	out, err := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("powershell failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -499,7 +855,7 @@ func isSpotifyStoreInstalled() (bool, error) {
 
 func uninstallSpotifyStore() error {
 	script := "$pkg = Get-AppxPackage -Name SpotifyAB.SpotifyMusic -ErrorAction SilentlyContinue; if ($pkg) { $pkg | Remove-AppxPackage -ErrorAction Stop }"
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	out, err := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("powershell failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -508,7 +864,7 @@ func uninstallSpotifyStore() error {
 
 func isRunningAsAdmin() bool {
 	script := "([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	out, err := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		return false
 	}
@@ -522,7 +878,7 @@ func runInstallerViaScheduledTask(setupPath string) error {
 
 	script := fmt.Sprintf("$apppath='powershell.exe'; $taskname='%s'; $action=New-ScheduledTaskAction -Execute $apppath -Argument \"-NoLogo -NoProfile -Command & '%s'\"; $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date); $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -WakeToRun; Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskname -Settings $settings -Force | Out-Null; Start-ScheduledTask -TaskName $taskname; Start-Sleep -Seconds 2; Unregister-ScheduledTask -TaskName $taskname -Confirm:$false", escapedTaskName, escapedSetupPath)
 
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	out, err := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("powershell failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
@@ -531,13 +887,13 @@ func runInstallerViaScheduledTask(setupPath string) error {
 
 func getSpotifyVersion(spotifyExe string) (string, error) {
 	escaped := strings.ReplaceAll(spotifyExe, "'", "''")
-	script := fmt.Sprintf("(Get-Item '%s').VersionInfo.ProductVersionRaw", escaped)
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	script := fmt.Sprintf("$vi=(Get-Item '%s').VersionInfo; $v=$vi.ProductVersion; if (-not $v) { $v=[string]$vi.ProductVersionRaw }; [string]$v", escaped)
+	out, err := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("powershell failed: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 
-	v := strings.TrimSpace(string(out))
+	v := normalizeVersionString(strings.TrimSpace(string(out)))
 	if v == "" {
 		return "", errors.New("empty Spotify version")
 	}
@@ -592,6 +948,49 @@ func leadingDigits(s string) string {
 	return b.String()
 }
 
+func normalizeVersionString(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	// Most systems return a dotted version directly.
+	for _, token := range strings.Fields(raw) {
+		if strings.Count(token, ".") >= 2 && leadingDigits(token) != "" {
+			return token
+		}
+	}
+
+	// Some PowerShell setups format ProductVersionRaw as a table (Major Minor Build Revision).
+	numbers := make([]string, 0, 4)
+	for _, token := range strings.Fields(raw) {
+		if !isAllDigits(token) {
+			continue
+		}
+		numbers = append(numbers, token)
+		if len(numbers) == 4 {
+			break
+		}
+	}
+	if len(numbers) >= 3 {
+		return strings.Join(numbers, ".")
+	}
+
+	return raw
+}
+
+func isAllDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func waitForFile(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -616,7 +1015,7 @@ func waitForProcess(name string, timeout time.Duration) error {
 }
 
 func processRunning(name string) (bool, error) {
-	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+name, "/FO", "CSV", "/NH").CombinedOutput()
+	out, err := hiddenCommand("tasklist", "/FI", "IMAGENAME eq "+name, "/FO", "CSV", "/NH").CombinedOutput()
 	if err != nil {
 		return false, err
 	}
