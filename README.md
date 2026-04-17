@@ -17,8 +17,9 @@
 4. Choose one action:
    - `Install / Patch` to install or update BlockTheSpot.
    - `Uninstall / Restore` to remove BlockTheSpot and restore original `chrome_elf.dll` when backup exists.
-5. Enable `Update or reinstall Spotify before patching` when you want to refresh Spotify before patching.
-6. If `Launch Spotify and close installer after completion` is enabled, Spotify starts and the installer closes automatically.
+5. Choose the Spotify Windows x64 version you want to install. The list only shows the recommended version from `config.ini` and newer supported versions, and the recommended one is preselected.
+6. Enable `Update or reinstall Spotify before patching` when you want to install the selected Spotify version before patching.
+7. If `Launch Spotify and close installer after completion` is enabled, Spotify starts and the installer closes automatically.
 
 ## Development
 
