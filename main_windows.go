@@ -25,9 +25,9 @@ import (
 const (
 	spotifySetupURL    = "https://download.scdn.co/SpotifyFullSetupX64.exe"
 	spotifyVersionsURL = "https://raw.githubusercontent.com/LoaderSpot/table/refs/heads/main/table/versions.json"
-	releaseChromeURL   = "https://github.com/mrpond/BlockTheSpot/releases/latest/download/chrome_elf.dll"
-	releaseBlockURL    = "https://github.com/mrpond/BlockTheSpot/releases/latest/download/blockthespot.dll"
-	configURL          = "https://gist.githubusercontent.com/Nuzair46/e946632cb56f11b38717a632e4d0e09b/raw"
+	releaseChromeURL   = "https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/chrome_elf.dll"
+	releaseBlockURL    = "https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/blockthespot.dll"
+	configURL          = "https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/config.ini"
 
 	installerLatestReleaseAPI = "https://api.github.com/repos/Nuzair46/BlockTheSpot-Installer/releases/latest"
 	installerReleasesURL      = "https://github.com/Nuzair46/BlockTheSpot-Installer/releases/latest"
@@ -173,7 +173,7 @@ func (a *installerApp) run() error {
 			Label{AssignTo: &a.status, Text: "Idle"},
 			TextEdit{AssignTo: &a.logView, ReadOnly: true, VScroll: true},
 			LinkLabel{
-				Text: `Credits: <a id="bts" href="https://github.com/mrpond/BlockTheSpot">BlockTheSpot (mrpond)</a> | <a id="installer" href="https://github.com/Nuzair46/BlockTheSpot-Installer">BlockTheSpot Installer (Nuzair46)</a> | <a id="discord" href="https://discord.gg/eYudMwgYtY">Discord Server</a>`,
+				Text: `Credits: <a id="bts" href="https://github.com/Nuzair46/BlockTheSpot">BlockTheSpot (Nuzair46)</a> | <a id="installer" href="https://github.com/Nuzair46/BlockTheSpot-Installer">BlockTheSpot Installer (Nuzair46)</a> | <a id="discord" href="https://discord.gg/eYudMwgYtY">Discord Server</a>`,
 				OnLinkActivated: func(link *walk.LinkLabelLink) {
 					_ = openExternalURL(link.URL())
 				},
