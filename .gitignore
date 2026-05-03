@@ -10,3 +10,4 @@ dist/
 # IDE/OS noise
 .DS_Store
 Thumbs.db
+.codex
