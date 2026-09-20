@@ -2,7 +2,7 @@
 
 Install [BlockTheSpot](https://github.com/Nuzair46/BlockTheSpot) — the Spotify desktop ad blocker — on Windows, on **any** Spotify version. The right patch kit is picked automatically for your build, and one click puts Spotify back.
 
-[**Download the installer**](https://github.com/RobyRew/BlockTheSpot-Installer/releases/latest/download/BlockTheSpotInstaller.exe) · [Spotify version library](https://robyrew.github.io/BlockTheSpot-Installer/) · [All releases](https://github.com/RobyRew/BlockTheSpot-Installer/releases/latest)
+[**Download the installer**](https://github.com/RobyRew/BlockTheSpot-Installer/releases/latest/download/BlockTheSpotInstaller.exe) · [Spotify version library](https://robyrew.github.io/spotify-versions-history/) · [All releases](https://github.com/RobyRew/BlockTheSpot-Installer/releases/latest)
 
 > Two kits ship inside the installer: **legacy** for Spotify 1.2.70–1.2.95 and **current** for 1.2.96+. The installer and the script choose for you from the installed version.
 
@@ -18,7 +18,7 @@ Pick one of the four ways below. None of them need administrator rights — Spot
 ### 2 · PowerShell (one line)
 
 ```powershell
-iwr -useb https://robyrew.github.io/BlockTheSpot-Installer/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/RobyRew/BlockTheSpot-Installer/main/scripts/install.ps1 | iex
 ```
 
 That patches the Spotify you already have. More options:
@@ -38,7 +38,7 @@ That patches the Spotify you already have. More options:
 | Option | What it does |
 |---|---|
 | **Spotify version** | Two pins: **1.3.1.234** (current kit, default) and **1.2.93.667** (legacy kit). |
-| **All versions** | Lists every build in the [library](https://robyrew.github.io/BlockTheSpot-Installer/); type a full version or an installer link to add one. |
+| **All versions** | Lists every build in the [library](https://robyrew.github.io/spotify-versions-history/); type a full version or an installer link to add one. |
 | **Install this Spotify version** | Off keeps your installed Spotify and patches it in place. |
 | **Apply BlockTheSpot patch** | Off installs only Spotify, any version, and removes a previous patch. |
 | **Replace Microsoft Store edition** | Swaps the Store app for the desktop app (this account only). |
@@ -73,20 +73,18 @@ node scripts/check-kit.mjs             # newest build in the catalog
 node scripts/check-kit.mjs 1.3.1.234   # a specific build
 ```
 
-It downloads that build's package, reads the bundle and verifies the kit that version maps to. The catalog refresh runs it whenever a new Spotify build appears, so a kit that needs rebuilding shows up in the run summary. `scripts/verify-config.py` does the check alone against an `xpui.spa` or an extracted directory.
+It reads the [catalog](https://robyrew.github.io/spotify-versions-history/api/v1/catalog.json), downloads that build's package, reads the bundle and verifies the kit that version maps to. A weekly **Kit check** workflow runs it against the newest build, so a kit that needs rebuilding shows up in the run summary. `scripts/verify-config.py` does the check alone against an `xpui.spa` or an extracted directory.
 
-The [version library](https://robyrew.github.io/BlockTheSpot-Installer/) is a searchable catalog of Spotify installers for Windows, macOS and Linux, with SHA-256 hashes a watcher takes from Spotify's own servers. See [docs/SPOTIFY_DOWNLOADS.md](docs/SPOTIFY_DOWNLOADS.md) for how the links and hashes are sourced.
+Spotify builds come from [spotify-versions-history](https://github.com/RobyRew/spotify-versions-history), a separate repository that keeps the [version library](https://robyrew.github.io/spotify-versions-history/) and the watcher that records each new build with the SHA-256 it took from Spotify's own servers. This repository only reads that catalog's [feed](https://robyrew.github.io/spotify-versions-history/api/v1/windows-x64.json); how the links and hashes are sourced is documented there.
 
 Support the artists you listen to — consider [Spotify Premium](https://www.spotify.com/premium/).
 
 ## Build
 
-.NET 10 (`global.json`) and Node 24. The app is a WPF/Fluent front end over a cross-platform core; patch kits are embedded from `src/BlockTheSpot.Core/Patch`.
+.NET 10 (`global.json`). The app is a WPF/Fluent front end over a cross-platform core; patch kits are embedded from `src/BlockTheSpot.Core/Patch`.
 
 ```sh
 dotnet test tests/BlockTheSpot.Tests/BlockTheSpot.Tests.csproj -c Release
-node --test scripts/test-site.mjs
-npm ci --prefix site && npm run build --prefix site
 ```
 
 Publish the self-contained EXE on Windows:
@@ -95,4 +93,4 @@ Publish the self-contained EXE on Windows:
 dotnet publish src/BlockTheSpot.App/BlockTheSpot.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o dist
 ```
 
-Releases are cut from **Actions → Release installer**, which attaches four files: the EXE and the current kit's `chrome_elf.dll`, `blockthespot.dll` and `config.ini`, with their SHA-256 listed in the release notes. `install.ps1` is served from GitHub Pages. The version library and its JSON APIs deploy from GitHub Pages; a scheduled watcher records new Spotify builds. Not affiliated with Spotify.
+Releases are cut from **Actions → Release installer**, which attaches four files: the EXE and the current kit's `chrome_elf.dll`, `blockthespot.dll` and `config.ini`, with their SHA-256 listed in the release notes. `install.ps1` and the panel script are read straight from this repository over `raw.githubusercontent.com`, so there is no site to deploy here. Not affiliated with Spotify.

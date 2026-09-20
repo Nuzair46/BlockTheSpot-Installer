@@ -28,7 +28,7 @@
     Release tag to pull the kit from. Default 'latest'.
 
 .EXAMPLE
-    iwr -useb https://robyrew.github.io/BlockTheSpot-Installer/install.ps1 | iex
+    iwr -useb https://raw.githubusercontent.com/RobyRew/BlockTheSpot-Installer/main/scripts/install.ps1 | iex
     Patch the installed Spotify with the matching kit.
 
 .EXAMPLE
@@ -58,7 +58,9 @@ $SpotifyDir   = Join-Path $env:APPDATA 'Spotify'
 $SpotifyExe   = Join-Path $SpotifyDir 'Spotify.exe'
 $Cut          = [version]'1.2.96.0'
 $LegacyFloor  = [version]'1.2.70.0'
-$Feed         = "https://robyrew.github.io/$($Repository.Split('/')[1])/api/v1/windows-x64.json"
+# The Spotify version catalog lives in its own repository.
+$Feed         = 'https://robyrew.github.io/spotify-versions-history/api/v1/windows-x64.json'
+$RawBase      = "https://raw.githubusercontent.com/$Repository/main"
 $PatchNames   = @('chrome_elf.dll', 'blockthespot.dll', 'config.ini')
 # This release carries the current kit only. The legacy kit is upstream's 1.2.93.667 release,
 # which is the same chrome_elf.dll, blockthespot.dll and config.ini, byte for byte.
@@ -72,7 +74,7 @@ $UpdatePath   = Join-Path $env:LOCALAPPDATA 'Spotify\Update'
 $SpaPath      = Join-Path $SpotifyDir 'Apps\xpui.spa'
 $SpaBackup    = "$SpaPath.bts-backup"
 $PanelName    = 'blockthespot-ui.js'
-$PanelSource  = "https://robyrew.github.io/$($Repository.Split('/')[1])/$PanelName"
+$PanelSource  = "$RawBase/src/BlockTheSpot.Core/Patch/$PanelName"
 
 function Write-Banner {
     Write-Host ''
@@ -227,7 +229,7 @@ function Install-Spotify($requested) {
         $feed = Invoke-RestMethod -Uri $Feed -UseBasicParsing
         $short = (($requested -split '\.')[0..3]) -join '.'
         $entry = $feed.$short
-        if (-not $entry) { Fail "Spotify $requested is not in the catalog. Browse https://robyrew.github.io/$($Repository.Split('/')[1])/ for available builds." }
+        if (-not $entry) { Fail "Spotify $requested is not in the catalog. Browse https://robyrew.github.io/spotify-versions-history/ for available builds." }
         $url = $entry.win.x64.url
         Write-Info "source: $url"
     }

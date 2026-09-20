@@ -46,12 +46,6 @@
       value: true,
       selectors: ['upgrade-button', 'premium-hero']
     },
-    downloadApp: {
-      label: 'Hide "download the app" prompts',
-      hint: 'Off by default: some people use this button.',
-      value: false,
-      selectors: ['upsell-download-app-button']
-    },
     updateNag: {
       label: 'Hide the "update available" badge',
       hint: 'Updates are blocked, so the badge only nags.',

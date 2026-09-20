@@ -2,9 +2,11 @@
 //
 // Spotify's web bundle (Apps/xpui.spa) is the same for every desktop platform of a build, and the
 // macOS package is a plain bzip2 tar, so a kit's byte signatures can be verified against any
-// version in the catalog without Windows and without installing anything. The release watcher runs
-// this on each new build, which is what turns "a new Spotify is out" into "the kit still matches"
-// or "the kit needs rebuilding" — the failure this repo previously only learned about from a user.
+// catalogued version without Windows and without installing anything. This turns "a new Spotify is
+// out" into "the kit still matches" or "the kit needs rebuilding" — the failure this repo
+// previously only learned about from a user.
+//
+// Versions come from the catalog published by RobyRew/spotify-versions-history.
 //
 //   node scripts/check-kit.mjs                # newest Windows x64 build in the catalog
 //   node scripts/check-kit.mjs 1.3.1.234      # a specific build
@@ -13,7 +15,6 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -71,7 +72,13 @@ async function extractBundle(kind, file, directory) {
   return join(directory, 'usr/share/spotify/Apps/xpui.spa');
 }
 
-const catalog = JSON.parse(await readFile(new URL('../site/data/catalog.json', import.meta.url), 'utf8'));
+const CATALOG = 'https://robyrew.github.io/spotify-versions-history/api/v1/catalog.json';
+const response = await fetch(CATALOG, { signal: AbortSignal.timeout(60_000) });
+if (!response.ok) {
+  console.error(`Could not read the version catalog (${CATALOG}): HTTP ${response.status}`);
+  process.exit(2);
+}
+const catalog = await response.json();
 const windows = catalog.entries.filter(entry => entry.platform === 'windows' && entry.architecture === 'x64');
 const requested = process.argv[2]?.split('.').slice(0, 4).join('.');
 const version = requested ?? windows.map(entry => entry.version).sort((a, b) => compare(numbers(a), numbers(b))).at(-1);

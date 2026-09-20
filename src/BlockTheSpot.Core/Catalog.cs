@@ -8,7 +8,7 @@ public static class Sources
 {
     public const string Repository = "https://github.com/RobyRew/BlockTheSpot-Installer";
     public static readonly Uri Catalog = new("https://raw.githubusercontent.com/LoaderSpot/table/main/table/versions.json");
-    public static readonly Uri CatalogApi = new("https://robyrew.github.io/BlockTheSpot-Installer/api/v1/windows-x64.json");
+    public static readonly Uri CatalogApi = new("https://robyrew.github.io/spotify-versions-history/api/v1/windows-x64.json");
     public static readonly Uri Config = new("https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/config.ini");
     public static readonly Uri Chrome = new("https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/chrome_elf.dll");
     public static readonly Uri Block = new("https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/blockthespot.dll");
@@ -21,9 +21,10 @@ public static class Sources
     // mirror as the fallback. Every download is still checked against Spotify's Authenticode signature.
     public const string MirrorHost = "loadspot.amd64fox1.workers.dev";
     public const string UpgradeHost = "upgrade.scdn.co";
-    // The release watcher (site/scripts/watch-official.mjs) downloads each new build from
-    // download.scdn.co, records its SHA-256 and ETag, and can attach the file to this release.
-    public const string ArchiveRepository = "RobyRew/BlockTheSpot-Installer";
+    // The version catalog and its release watcher live in RobyRew/spotify-versions-history, which
+    // records each new build and can attach the installer it downloaded to one of its releases.
+    // Copies attached before the catalog moved there stay resolvable under the old repository name.
+    public static readonly string[] ArchiveRepositories = ["RobyRew/spotify-versions-history", "RobyRew/BlockTheSpot-Installer"];
 }
 
 /// <summary>
@@ -103,8 +104,12 @@ public static partial class SpotifyVersions
     private static string? VersionFromArchive(Uri url)
     {
         if (!IsPlainHttps(url) || url.Host != "github.com") return null;
-        var match = Regex.Match(url.AbsolutePath, $@"^/{Regex.Escape(Sources.ArchiveRepository)}/releases/download/[A-Za-z0-9._-]+/spotify_installer-(1\.\d+\.\d+\.\d+\.g[0-9a-fA-F]+)-x64\.exe$", RegexOptions.CultureInvariant);
-        return match.Success ? match.Groups[1].Value : null;
+        foreach (var repository in Sources.ArchiveRepositories)
+        {
+            var match = Regex.Match(url.AbsolutePath, $@"^/{Regex.Escape(repository)}/releases/download/[A-Za-z0-9._-]+/spotify_installer-(1\.\d+\.\d+\.\d+\.g[0-9a-fA-F]+)-x64\.exe$", RegexOptions.CultureInvariant);
+            if (match.Success) return match.Groups[1].Value;
+        }
+        return null;
     }
 
     // Spotify's versioned links carry a signed, 30-day ?fauth= token; it is the only query string accepted anywhere.
