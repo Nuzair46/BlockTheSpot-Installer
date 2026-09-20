@@ -1,13 +1,13 @@
-A BlockTheSpot section inside Spotify's own settings.
+Updates are stopped in the client's own request path, and more ad endpoints are blocked.
 
-- **Settings panel.** The installer adds a `BlockTheSpot` section to the top of Spotify's settings: whether the patch is active, which kit and Spotify build it applied to, whether auto-update is locked, switches for hiding ad slots, the Premium upsell and the "download the app" prompts, and a collapsed **A/B and feature flags** list.
-- **About shows the patch.** The version line in Spotify's About area gets a "BlockTheSpot is active" line beside it, with the same kit and build detail.
-- **How it is added.** One script file plus one tag in `index.html`, inside `Apps/xpui.spa`. Spotify's own bundle is kept untouched next to it, so **Restore original Spotify** (or `install.ps1 -Restore`) puts back the exact original file, and re-running never stacks changes. The rebuilt bundle is opened and checked before it replaces the original: if anything about it fails, Spotify's file is left alone, because a corrupt bundle stops Spotify from starting.
-- **Turning it off.** Clear **Add BlockTheSpot panel to Spotify** in the installer, or pass `-NoPanel` to `install.ps1`. Either one also removes a panel a previous run added.
-- The flag list reads what the client keeps locally; Spotify decides most flags server-side, so an override may be ignored or reset. The panel says so.
+- **Auto-update blocked in logic.** Spotify asks about updates at `/desktop-update/` and downloads the package from `upgrade.scdn.co/upgrade/client/`. Those are different requests, so the kit now blocks the download path and leaves the status query alone: the About panel keeps showing its version and update status, and no update can be fetched over the patch. Locking `%LOCALAPPDATA%\Spotify\Update` stays as a second line of defence.
+- **More ad and tracking endpoints blocked**, all read out of the shipped bundle rather than guessed: podcast leave-behind ads (`/leavebehinds/ads`), the sponsored-recommendations frame, the ad-transparency metadata call (`/dsa-metadata`), Spotify's tracking pixels (`pixel.spotify.com`, `pixel-static.spotify.com`) and the retargeting pixel loader.
+- **"Update available" badge** can be hidden from the BlockTheSpot panel; it is on by default, since the update it advertises is blocked anyway.
+
+The `/desktop-update/` status query stays reachable on purpose. Blocking it is what emptied the About panel before, and blocking the download is what actually stops an update.
 
 **Downloads:** `BlockTheSpotInstaller.exe`, plus `chrome_elf.dll`, `blockthespot.dll` and `config.ini` for a manual install. Their SHA-256 are listed below.
 
 Open the app normally, without "Run as administrator." The Spotify setup and patch target the current Windows account. The executable is not code-signed; Spotify's downloaded installer is signature-checked before it runs.
 
-Verification: 89 core regression tests on Linux and Windows, including a bundle round-trip that asserts restoring returns the byte-exact original, that a second run does not stack, and that a bundle missing `index.html` is refused rather than rewritten; the same round-trip was run against the PowerShell path. 23 catalog/site checks and the native Windows startup/render test in both themes. The injected panel itself is not exercised on GitHub's runners.
+Verification: 89 core regression tests on Linux and Windows, 23 catalog/site checks, the native Windows startup/render test in both themes, and the 9 kit signatures matched against Spotify 1.3.1.234 with `scripts/verify-config.py`. The blocked endpoints are taken from that bundle; the running client is not exercised on GitHub's runners.

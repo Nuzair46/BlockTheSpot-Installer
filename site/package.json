@@ -2,7 +2,7 @@
   "name": "blockthespot-catalog",
   "private": true,
   "type": "module",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "engines": { "node": ">=22.12.0" },
   "scripts": {
     "dev": "astro dev --host 127.0.0.1",

@@ -64,7 +64,7 @@ BlockTheSpot proxies Spotify's `chrome_elf.dll` and reads `config.ini` at startu
 
 The **panel** is one script plus one tag added inside `Apps/xpui.spa`; Spotify's untouched bundle is kept beside it, so restoring is a copy back and re-running rebuilds from the original instead of stacking. The rebuilt bundle is validated before it replaces the original, and the injected script is wrapped so a selector that stops matching costs a hidden element rather than a working client.
 
-Auto-update is stopped by locking `%LOCALAPPDATA%\Spotify\Update` rather than by blocking `/desktop-update/`, so Spotify's About panel keeps showing its version and update status. Restoring, or turning the patch off, releases the lock.
+Auto-update is stopped in the client's own request path: Spotify asks about updates at `/desktop-update/` but downloads the package from `upgrade.scdn.co/upgrade/client/`, so the kit blocks the download and leaves the status query alone. The About panel keeps its version and update status, and nothing can land on top of the patch. `%LOCALAPPDATA%\Spotify\Update` is locked as well; restoring, or turning the patch off, releases it.
 
 A kit's `config.ini` only works if its byte signatures match the Spotify build it targets. Check one before pinning a new build:
 
