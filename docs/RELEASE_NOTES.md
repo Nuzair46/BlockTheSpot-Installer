@@ -1,13 +1,14 @@
-Updates are stopped in the client's own request path, and more ad endpoints are blocked.
+The settings panel now appears, and promo popups are closed.
 
-- **Auto-update blocked in logic.** Spotify asks about updates at `/desktop-update/` and downloads the package from `upgrade.scdn.co/upgrade/client/`. Those are different requests, so the kit now blocks the download path and leaves the status query alone: the About panel keeps showing its version and update status, and no update can be fetched over the patch. Locking `%LOCALAPPDATA%\Spotify\Update` stays as a second line of defence.
-- **More ad and tracking endpoints blocked**, all read out of the shipped bundle rather than guessed: podcast leave-behind ads (`/leavebehinds/ads`), the sponsored-recommendations frame, the ad-transparency metadata call (`/dsa-metadata`), Spotify's tracking pixels (`pixel.spotify.com`, `pixel-static.spotify.com`) and the retargeting pixel loader.
-- **"Update available" badge** can be hidden from the BlockTheSpot panel; it is on by default, since the update it advertises is blocked anyway.
+- **Why the panel was missing.** It was inserted into a guessed `main` container. The bundle actually renders settings into `data-testid="settings-page"` on the `/preferences` route, so the panel is now placed there — an anchor read out of Spotify's own code rather than guessed. It also logs one line to DevTools on load, so it is obvious whether the script is running at all.
+- **Promo popups.** The "3 months of Premium" style dialogs are appended by the client into `inAppMessageContainer`. That container is now emptied as soon as it is filled, which is the same cleanup the client performs itself, and hidden by CSS. Hiding alone can leave the dialog holding focus, so it is emptied as well.
+- **Options apply immediately.** Every switch rewrites one `<style>` element and takes effect on the spot; nothing needs a restart. Loading the panel itself still needs Spotify started once after installing.
+- **Native theming.** The panel uses Spotify's own custom properties, so it follows the client's light and dark themes.
 
-The `/desktop-update/` status query stays reachable on purpose. Blocking it is what emptied the About panel before, and blocking the download is what actually stops an update.
+After installing, start Spotify once, then open **Settings** — the BlockTheSpot section is at the top, and the About version line carries the active status.
 
 **Downloads:** `BlockTheSpotInstaller.exe`, plus `chrome_elf.dll`, `blockthespot.dll` and `config.ini` for a manual install. Their SHA-256 are listed below.
 
 Open the app normally, without "Run as administrator." The Spotify setup and patch target the current Windows account. The executable is not code-signed; Spotify's downloaded installer is signature-checked before it runs.
 
-Verification: 89 core regression tests on Linux and Windows, 23 catalog/site checks, the native Windows startup/render test in both themes, and the 9 kit signatures matched against Spotify 1.3.1.234 with `scripts/verify-config.py`. The blocked endpoints are taken from that bundle; the running client is not exercised on GitHub's runners.
+Verification: 89 core regression tests on Linux and Windows, including the bundle round-trip that asserts restoring returns the byte-exact original; 23 catalog/site checks; the native Windows startup/render test in both themes; and the 9 kit signatures matched against Spotify 1.3.1.234. The panel's own rendering is not exercised on GitHub's runners.
