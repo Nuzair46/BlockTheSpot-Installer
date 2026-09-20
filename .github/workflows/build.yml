@@ -1,0 +1,89 @@
+name: Test and build Windows app
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        default: '0.4.0'
+      ref:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  tests:
+    name: Core tests (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Restore locked test dependencies
+        run: dotnet restore tests/BlockTheSpot.Tests/BlockTheSpot.Tests.csproj --locked-mode
+      - name: Run regression tests
+        run: dotnet test tests/BlockTheSpot.Tests/BlockTheSpot.Tests.csproj -c Release --no-restore --logger trx --results-directory TestResults
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}
+          path: TestResults
+  windows:
+    name: Publish and smoke-test native UI
+    needs: tests
+    runs-on: windows-latest
+    env:
+      APP_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Build self-contained Windows x64 EXE
+        shell: pwsh
+        run: |
+          dotnet publish src/BlockTheSpot.App/BlockTheSpot.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:Version=$env:APP_VERSION -p:DebugType=None -p:DebugSymbols=false -o dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke-test real Windows UI and render both themes
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ui-smoke | Out-Null
+          $process = Start-Process -FilePath ./dist/BlockTheSpotInstaller.exe -ArgumentList '--smoke-test', 'ui-smoke' -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'UI smoke test timed out.' }
+          if ($process.ExitCode -ne 0) { Get-Content ui-smoke/error.txt -ErrorAction SilentlyContinue; throw 'UI smoke test failed.' }
+          if (-not (Test-Path ui-smoke/result.txt)) { throw 'UI smoke test produced no result.' }
+          Get-Content ui-smoke/result.txt
+      - name: Parse the PowerShell installer
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Host $_.Message }; throw 'install.ps1 has parse errors.' }
+          Write-Host 'install.ps1 parsed cleanly.'
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/BlockTheSpotInstaller.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$hash  BlockTheSpotInstaller.exe`n", [Text.Encoding]::ASCII)
+          Copy-Item LICENSE dist/LICENSE.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: BlockTheSpotInstaller-windows-x64
+          path: |
+            dist/BlockTheSpotInstaller.exe
+            dist/SHA256SUMS.txt
+            dist/LICENSE.txt
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-ui-smoke
+          path: ui-smoke
+          if-no-files-found: warn

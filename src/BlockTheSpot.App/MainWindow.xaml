@@ -1,0 +1,154 @@
+<Window x:Class="BlockTheSpot.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="BlockTheSpot" Width="620" SizeToContent="Height" MinWidth="560" ResizeMode="CanMinimize"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterScreen" UseLayoutRounding="True">
+    <Window.InputBindings>
+        <KeyBinding Key="R" Modifiers="Control" Command="{Binding RefreshCommand}"/>
+        <KeyBinding Key="Escape" Command="{Binding CancelCommand}"/>
+    </Window.InputBindings>
+    <Window.Resources>
+        <Style x:Key="Hint" TargetType="TextBlock" BasedOn="{StaticResource SecondaryText}">
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style x:Key="Option" TargetType="CheckBox">
+            <Setter Property="IsEnabled" Value="{Binding CanEdit}"/>
+            <Setter Property="Margin" Value="0,0,12,6"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="Chip" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="6,1"/>
+            <Setter Property="Margin" Value="8,0,0,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <!-- Version badge: the tested build is the only accent-filled chip -->
+        <Style x:Key="Badge" TargetType="Border" BasedOn="{StaticResource Chip}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Recommended}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}"/>
+                    <Setter Property="TextElement.Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="20,16,20,14">
+        <!-- Header: identity and the installed Spotify in one glance -->
+        <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Border Background="#173D2A" CornerRadius="10" Width="40" Height="40" Margin="0,0,12,0">
+                <TextBlock Text="&#xE8D7;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="#88E3AA" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="BlockTheSpot" FontSize="18" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding InstalledLabel}" Style="{StaticResource Hint}" Margin="0,2,0,0" AutomationProperties.LiveSetting="Polite"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Style="{StaticResource Chip}" Margin="0,0,8,0"><TextBlock Text="Windows x64" FontSize="11"/></Border>
+                <Button Content="{Binding VersionLabel}" Command="{Binding ReleasesCommand}" ToolTip="Open releases on GitHub" Padding="10,5" FontSize="12"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- Spotify version: tested build by default, the whole catalog or a typed version on request -->
+        <Border Style="{StaticResource Card}" Margin="0,0,0,10">
+            <StackPanel>
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="Spotify version" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+                    <CheckBox Grid.Column="1" Content="{Binding AllVersionsLabel}" IsChecked="{Binding ShowAllVersions}" IsEnabled="{Binding CanEdit}" VerticalAlignment="Center"
+                              ToolTip="List every catalog build, newest first, and accept a typed version or installer link. Current (≥ 1.2.96) and Legacy (≤ 1.2.95) kits are both bundled."/>
+                </Grid>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <ComboBox x:Name="VersionPicker" ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}"
+                              IsEnabled="{Binding CanEdit}" HorizontalContentAlignment="Stretch" MinHeight="36"
+                              AutomationProperties.Name="Spotify version" MaxDropDownHeight="320">
+                        <ComboBox.ItemsPanel>
+                            <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+                        </ComboBox.ItemsPanel>
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <!-- Version and badge keep their natural width; the detail trims when the row is narrow. -->
+                                <Grid Margin="2,2">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <Border Style="{StaticResource Badge}"><TextBlock Text="{Binding Badge}" FontSize="11"/></Border>
+                                        <Border Style="{StaticResource Chip}" Visibility="{Binding ShowMethod, Converter={StaticResource BoolVisibility}}"><TextBlock Text="{Binding Method}" FontSize="11"/></Border>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="{Binding Detail}" Style="{StaticResource Hint}" Margin="12,0,4,0" VerticalAlignment="Center"
+                                               HorizontalAlignment="Right" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button Grid.Column="1" Command="{Binding RefreshCommand}" ToolTip="Refresh versions (Ctrl+R)" Margin="8,0,0,0" Padding="10,0" MinHeight="36"
+                            AutomationProperties.Name="Refresh versions">
+                        <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14"/>
+                    </Button>
+                </Grid>
+                <TextBox x:Name="FilterBox" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" Margin="0,8,0,0" MinHeight="32"
+                         Visibility="{Binding ShowAllVersions, Converter={StaticResource BoolVisibility}}"
+                         AutomationProperties.Name="Filter versions or enter a version" AutomationProperties.HelpText="Type part of a version to filter, or a full version such as 1.2.80.699.gd5f6ebe3 or an installer link to add it"/>
+                <TextBlock Text="Filter the list, or type a full version (1.2.80.699.gd5f6ebe3) or a Spotify / LoadSpot installer link to add it."
+                           Style="{StaticResource Hint}" Margin="0,4,0,0" Visibility="{Binding ShowAllVersions, Converter={StaticResource BoolVisibility}}"/>
+                <TextBlock Text="{Binding CatalogHint}" Style="{StaticResource Hint}" Margin="0,8,0,0"/>
+                <TextBlock Text="{Binding PatchMethodLabel}" Style="{StaticResource Hint}" Margin="0,4,0,0" AutomationProperties.LiveSetting="Polite"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Options: one line each, details on hover -->
+        <Border Style="{StaticResource Card}" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                <CheckBox Style="{StaticResource Option}" Content="Install this Spotify version" IsChecked="{Binding ReinstallSpotify}"
+                          ToolTip="Downloads and runs the selected Spotify setup first. Turn off to keep the version already installed; a missing Spotify is always installed."/>
+                <CheckBox Style="{StaticResource Option}" Grid.Column="1" Content="Open Spotify when finished" IsChecked="{Binding LaunchSpotify}"/>
+                <CheckBox Style="{StaticResource Option}" Grid.Row="1" Content="Apply BlockTheSpot patch" IsChecked="{Binding ApplyPatch}"
+                          ToolTip="Applies the bundled BlockTheSpot kit for this Spotify version: legacy (kernel32 IAT) up to 1.2.95, current (api-ms IAT) from 1.2.96. Turn off to install only Spotify."/>
+                <CheckBox Style="{StaticResource Option}" Grid.Row="1" Grid.Column="1" Content="Replace Microsoft Store edition" IsChecked="{Binding RemoveStoreEdition}"
+                          ToolTip="Removes the Store app from this Windows account and installs desktop Spotify. Your account and playlists stay with Spotify."/>
+                <CheckBox Style="{StaticResource Option}" Grid.Row="2" Content="Add BlockTheSpot panel to Spotify" IsChecked="{Binding AddPanel}" IsEnabled="{Binding CanEdit}"
+                          ToolTip="Adds a BlockTheSpot section at the top of Spotify's settings (status, extra hiding options, an A/B flag list) and marks the About version as patched. Restoring removes it."/>
+            </Grid>
+        </Border>
+
+        <!-- Status and progress -->
+        <Border Style="{StaticResource Card}" AutomationProperties.LiveSetting="Polite">
+            <StackPanel>
+                <Grid>
+                    <TextBlock Text="{Binding Status}" FontSize="15" FontWeight="SemiBold"/>
+                    <TextBlock Text="{Binding ProgressLabel}" HorizontalAlignment="Right" Style="{StaticResource Hint}"/>
+                </Grid>
+                <TextBlock Text="{Binding StatusDetail}" Style="{StaticResource Hint}" Margin="0,3,0,8"/>
+                <ProgressBar Value="{Binding ProgressValue, Mode=OneWay}" IsIndeterminate="{Binding IsLoading}" Height="4" AutomationProperties.Name="Installation progress"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Actions -->
+        <Grid Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button Content="Restore original Spotify" Command="{Binding RestoreCommand}" Padding="12,8" Margin="0,0,8,0"/>
+                <ToggleButton Content="Activity log" IsChecked="{Binding ShowLog}" Padding="12,8"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" Command="{Binding CancelCommand}" Visibility="{Binding IsBusy, Converter={StaticResource BoolVisibility}}" Padding="14,8" Margin="0,0,8,0"/>
+                <Button x:Name="InstallButton" Content="{Binding PrimaryAction}" Command="{Binding InstallCommand}" Padding="20,8" FontWeight="SemiBold"
+                        Background="{DynamicResource AccentFillColorDefaultBrush}" Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}"
+                        AutomationProperties.Name="Install"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Visibility="{Binding ShowLog, Converter={StaticResource BoolVisibility}}" Margin="0,10,0,0">
+            <TextBox x:Name="LogBox" Text="{Binding LogText, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" FontSize="11"
+                     Height="130" VerticalScrollBarVisibility="Auto" TextWrapping="Wrap" AutomationProperties.Name="Activity log"/>
+            <Button Content="Save log…" Command="{Binding SaveLogCommand}" HorizontalAlignment="Right" Margin="0,6,0,0" Padding="10,5" FontSize="12"/>
+        </StackPanel>
+        <Grid Margin="0,12,0,0">
+            <TextBlock Text="Support the music you love. Consider Spotify Premium." FontSize="11" Style="{StaticResource SecondaryText}"/>
+            <TextBlock HorizontalAlignment="Right" FontSize="11"><Hyperlink NavigateUri="https://github.com/RobyRew/BlockTheSpot-Installer" RequestNavigate="OpenLink">Source &amp; help</Hyperlink></TextBlock>
+        </Grid>
+    </StackPanel>
+</Window>

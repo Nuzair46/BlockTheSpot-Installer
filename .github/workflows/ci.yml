@@ -1,0 +1,36 @@
+name: Installer CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'testdata/**'
+      - 'assets/**'
+      - 'global.json'
+      - 'Directory.Build.props'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/release.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'testdata/**'
+      - 'assets/**'
+      - 'global.json'
+      - 'Directory.Build.props'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/build.yml'
+      - '.github/workflows/release.yml'
+permissions:
+  contents: read
+concurrency:
+  group: installer-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}

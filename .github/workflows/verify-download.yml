@@ -1,0 +1,32 @@
+name: Verify live Spotify download
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download tested Spotify and verify its publisher
+        shell: pwsh
+        run: |
+          $catalog = Get-Content testdata/loadspot_versions.json -Raw | ConvertFrom-Json -AsHashtable
+          $entry = $catalog['1.2.93.667']
+          if ($entry.fullversion -ne '1.2.93.667.g7b5cc0ce') { throw 'Tested version mismatch.' }
+          $asset = $entry.win.x64
+          $target = Join-Path $env:RUNNER_TEMP 'BlockTheSpot-Spotify-source-check.exe'
+          try {
+            Invoke-WebRequest -Uri $asset.url -OutFile $target -TimeoutSec 180 -MaximumRetryCount 1 -RetryIntervalSec 3
+            if ((Get-Item $target).Length -ne $asset.size) { throw 'Unexpected installer size.' }
+            $signature = Get-AuthenticodeSignature -LiteralPath $target
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Spotify (?:AB|USA Inc\.)(?:,|$)') {
+              throw "Invalid Spotify signature: $($signature.Status)"
+            }
+            "Verified $($entry.fullversion): $($asset.size) bytes"
+            "Publisher: $($signature.SignerCertificate.Subject)"
+            Get-FileHash $target -Algorithm SHA256
+          } finally {
+            if (Test-Path $target) { Remove-Item $target }
+          }

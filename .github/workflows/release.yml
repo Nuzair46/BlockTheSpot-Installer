@@ -1,0 +1,77 @@
+name: Release installer
+run-name: Release installer ${{ inputs.version }}
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example 0.4.0 (no v prefix)'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: installer-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate explicit release request
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then echo 'Releases must be dispatched from main.'; exit 1; fi
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo 'Expected a version such as 0.4.0'; exit 1; fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION"; then echo 'This version already exists.'; exit 1; fi
+          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+  build:
+    needs: validate
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}
+      version: ${{ needs.validate.outputs.version }}
+  publish:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: BlockTheSpotInstaller-windows-x64
+          path: dist
+      - name: Verify artifact checksum
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS.txt
+      - name: Attach the current patch kit
+        run: |
+          set -euo pipefail
+          # The release carries four files only: the installer and the current kit's three, under the
+          # names they take inside %APPDATA%\\Spotify. The legacy kit stays upstream (Nuzair46 1.2.93.667).
+          P=src/BlockTheSpot.Core/Patch
+          cp "$P/chrome_elf.dll"           dist/chrome_elf.dll
+          cp "$P/current/blockthespot.dll" dist/blockthespot.dll
+          cp "$P/current/config.ini"       dist/config.ini
+          # Checksums go in the release body rather than a separate asset.
+          cp docs/RELEASE_NOTES.md notes.md
+          {
+            printf '\n## Checksums (SHA-256)\n\n```\n'
+            (cd dist && sha256sum BlockTheSpotInstaller.exe chrome_elf.dll blockthespot.dll config.ini)
+            printf '```\n'
+          } >> notes.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          gh release create "v$RELEASE_VERSION" \
+            dist/BlockTheSpotInstaller.exe \
+            dist/chrome_elf.dll dist/blockthespot.dll dist/config.ini \
+            --target "$RELEASE_COMMIT" --title "BlockTheSpot Installer v$RELEASE_VERSION" --notes-file notes.md --latest

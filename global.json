@@ -1,0 +1,3 @@
+{
+  "sdk": { "version": "10.0.401", "rollForward": "latestPatch", "allowPrerelease": false }
+}

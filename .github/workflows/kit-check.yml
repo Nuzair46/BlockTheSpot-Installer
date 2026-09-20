@@ -1,0 +1,25 @@
+name: Kit check
+# A kit's signatures failing to match is silent: the ads it should hide keep showing. The version
+# catalog lives in RobyRew/spotify-versions-history, so this checks the newest build it lists.
+on:
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Spotify version to check (blank = newest in the catalog)'
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Check the shipped kit against the build
+        run: node scripts/check-kit.mjs ${{ inputs.version }}

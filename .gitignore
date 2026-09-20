@@ -1,13 +1,23 @@
 # Build outputs
-*.exe
+**/bin/
+**/obj/
 dist/
+TestResults/
+ui-smoke/
+*.exe
 *.syso
-
-# Go test / build caches
 *.test
 *.out
-
-# IDE/OS noise
+# IDE and OS files
+.vs/
+.idea/
 .DS_Store
 Thumbs.db
 .codex
+# Astro
+node_modules/
+.astro/
+__pycache__/
+
+# Install script copied into the Pages build; canonical source is scripts/install.ps1
+/site/public/install.ps1
