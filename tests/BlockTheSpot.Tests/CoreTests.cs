@@ -598,7 +598,8 @@ public sealed class InstallerTests
         var choice = SpotifyVersions.TryCustom("1.2.40.599.g606b7f29")!;
         await new InstallerService(new Downloads(client), platform).InstallAsync(
             new(choice, true, false, false, AllowUntested: false, ApplyPatch: false), new InlineProgress<InstallProgress>(_ => { }), CancellationToken.None);
-        Assert.Equal(["signature", "stop", "setup", "stop"], platform.Events);
+        // Turning the patch off also releases the updater lock, so Spotify can update again.
+        Assert.Equal(["signature", "stop", "setup", "stop", "allow-updates"], platform.Events);
         Assert.Equal("1.2.40.599.g606b7f29", platform.Version);
         Assert.Equal(["chrome_elf.dll"], Directory.GetFiles(directory.Path).Select(Path.GetFileName).Order());
     }
@@ -624,6 +625,27 @@ public sealed class InstallerTests
             new(SpotifyVersions.TryCustom("1.2.40.599.g606b7f29")!, true, false, false, AllowUntested: true), new InlineProgress<InstallProgress>(_ => { }), CancellationToken.None));
         Assert.Contains("turn off the patch", error.Message);
         Assert.Empty(platform.Events);
+    }
+
+    [Fact]
+    public async Task PatchingBlocksTheUpdaterAndRestoringReleasesIt()
+    {
+        using var directory = new TemporaryDirectory();
+        var platform = new FakePlatform(directory.Path) { Version = "1.3.1.234.g59d6bf59" };
+        File.WriteAllText(Path.Combine(directory.Path, "chrome_elf.dll"), "original");
+        using var client = Client();
+        var installer = new InstallerService(new Downloads(client), platform);
+        await installer.InstallAsync(new(Compatibility.TestedChoice, false, false, false),
+            new InlineProgress<InstallProgress>(_ => { }), CancellationToken.None);
+        // The updater is stopped only after the files are in place, never before.
+        Assert.Contains("block-updates", platform.Events);
+        Assert.True(platform.Events.IndexOf("block-updates") > platform.Events.IndexOf("stop"));
+        Assert.DoesNotContain("allow-updates", platform.Events);
+
+        platform.Events.Clear();
+        await installer.RestoreAsync(new InlineProgress<InstallProgress>(_ => { }), CancellationToken.None);
+        Assert.Contains("allow-updates", platform.Events);
+        Assert.DoesNotContain("block-updates", platform.Events);
     }
 
     [Fact]
@@ -693,6 +715,7 @@ public sealed class InstallerTests
             Events.Add("setup"); Version = selected.FullVersion ?? "1.3.1.223";
             File.WriteAllText(Path.Combine(directory, "chrome_elf.dll"), "original"); return Task.CompletedTask;
         }
+        public void SetUpdatesBlocked(bool blocked) { Events.Add(blocked ? "block-updates" : "allow-updates"); }
         public void LaunchSpotify() => Events.Add("launch");
     }
 }

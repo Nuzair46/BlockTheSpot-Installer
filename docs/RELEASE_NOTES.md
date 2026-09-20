@@ -1,12 +1,12 @@
-Two bundled BlockTheSpot kits, chosen by Spotify version.
+Ads blocked again on 1.2.96+, and the About panel keeps its information.
 
-- **Legacy and current kits ship inside the installer** as embedded resources; the patch files are no longer downloaded at install time. The release also attaches the current kit's `chrome_elf.dll`, `blockthespot.dll` and `config.ini` for manual installs, and `install.ps1` is served from GitHub Pages. A kit table maps each Spotify version to a kit: **legacy** (Spotify 1.2.70–1.2.95, the upstream Nuzair46 files verified with 1.2.93.667) and **current** (Spotify ≥ 1.2.96, adapted for 1.3.1.234). The newest kit in the table is always the current one and keeps taking every newer build; adding a future kit is a folder plus one table row.
-- **The kit follows the Spotify that will run.** Reinstalling a build stages that build's kit; keeping the installed Spotify stages the kit for the installed version; if setup lands on a version in the other range, the kit is re-staged before patching. The version picker shows a Method chip (Current/Legacy) per build and a line naming the kit that will be applied.
-- **Two pins by default:** 1.3.1.234.g59d6bf59 (current, default) and 1.2.93.667.g7b5cc0ce (legacy). Tick **All versions** for any other build; the patch floor is 1.2.70.
-- The current kit's `blockthespot.dll` is the upstream 1.2.93.667 build with two IAT jumps NOP'd, and its `config.ini` carries xpui signatures rebuilt for 1.3.1.234. The legacy kit is upstream v1.2.93.667-build.8 byte for byte. Only the legacy build has been verified end to end.
+- **Home and player ads.** In Spotify 1.3.x the ad state moved out of the per-view chunks the old config patched (`1602.js`, `home-hpto.js`, `dwp-top-bar.js`) and into one Redux reducer in `xpui.js`. The current kit never touched it, so `adsEnabled` stayed on and ads kept rendering. The kit now patches that reducer directly: `ADS_ENABLED` can no longer set `adsEnabled`, `ADS_HPTO_HIDDEN` is forced hidden, and `ADS_PREMIUM` is forced on. Those three gates feed the home page, the player, the leaderboard and the upsell surfaces.
+- **About panel.** `config.ini` no longer blocks `/desktop-update/`; that endpoint is what the About panel reads for its version and update status, and blocking it left the panel empty.
+- **Auto-update is stopped a different way.** Because that URL is now reachable, the installer and `install.ps1` lock Spotify's updater instead, by putting a read-only file where `%LOCALAPPDATA%\Spotify\Update` would go. Restoring Spotify, or turning the patch off, releases it.
+- **Signatures are checked against the real build.** Every `Buffer_modify` signature in the current kit was matched byte for byte against the `xpui.spa` of Spotify 1.3.1.234 (9/9). `scripts/verify-config.py` does this check and is the way to validate a kit before pinning a new Spotify build.
 
-**Downloads:** `BlockTheSpotInstaller.exe` and its SHA-256 checksum in `SHA256SUMS.txt`.
+**Downloads:** `BlockTheSpotInstaller.exe`, plus `chrome_elf.dll`, `blockthespot.dll` and `config.ini` for a manual install. Their SHA-256 are listed below.
 
-Open the app normally, without “Run as administrator.” The Spotify setup and patch target the current Windows account. The executable is not code-signed; Spotify's downloaded installer is signature-checked before it runs.
+Open the app normally, without "Run as administrator." The Spotify setup and patch target the current Windows account. The executable is not code-signed; Spotify's downloaded installer is signature-checked before it runs.
 
-Verification: 83 core regression tests on both Linux and Windows, 23 catalog/site/watcher checks, and the native Windows startup/render test in both themes, which now also exercises the two pinned builds. The full install/reinstall process is not exercised on GitHub's hosted runners.
+Verification: 84 core regression tests on Linux and Windows, 23 catalog/site checks, the native Windows startup/render test in both themes, and the 9 kit signatures matched against Spotify 1.3.1.234. The patched client itself is not exercised on GitHub's runners.

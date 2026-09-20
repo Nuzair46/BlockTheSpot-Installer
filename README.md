@@ -60,6 +60,16 @@ The **Method** chip on each build shows which kit it uses; the kit is always cho
 
 BlockTheSpot proxies Spotify's `chrome_elf.dll` and reads `config.ini` at startup. Spotify's ad-block hook site changed at 1.2.96, so two kits are bundled: **legacy** is the upstream Nuzair46 build; **current** is that build adapted for 1.2.96+ (`config.ini` rebuilt for the newer `xpui`). `Compatibility.Kits` maps each Spotify version to a kit — the newest kit is always the current one, and every download is checked against Spotify's Authenticode signature before setup runs.
 
+Auto-update is stopped by locking `%LOCALAPPDATA%\Spotify\Update` rather than by blocking `/desktop-update/`, so Spotify's About panel keeps showing its version and update status. Restoring, or turning the patch off, releases the lock.
+
+A kit's `config.ini` only works if its byte signatures match the Spotify build it targets. Check one before pinning a new build:
+
+```sh
+tar xjf spotify-autoupdate-<version>-x86_64.tbz Contents/Resources/Apps/xpui.spa
+unzip -q -d xpui Contents/Resources/Apps/xpui.spa
+python3 scripts/verify-config.py src/BlockTheSpot.Core/Patch/current/config.ini xpui
+```
+
 The [version library](https://robyrew.github.io/BlockTheSpot-Installer/) is a searchable catalog of Spotify installers for Windows, macOS and Linux, with SHA-256 hashes a watcher takes from Spotify's own servers. See [docs/SPOTIFY_DOWNLOADS.md](docs/SPOTIFY_DOWNLOADS.md) for how the links and hashes are sourced.
 
 Support the artists you listen to — consider [Spotify Premium](https://www.spotify.com/premium/).

@@ -14,6 +14,8 @@ public interface ISpotifyPlatform
     Task StopSpotifyAsync(CancellationToken token);
     Task VerifySpotifyPublisherAsync(string installerPath, CancellationToken token);
     Task RunSetupAsync(string installerPath, string minimum, SpotifyChoice selected, CancellationToken token);
+    /// <summary>Stops or restores Spotify's self-updater. The patch is undone by any update that lands.</summary>
+    void SetUpdatesBlocked(bool blocked);
     void LaunchSpotify();
 }
 
@@ -94,6 +96,9 @@ public sealed class InstallerService(Downloads downloads, ISpotifyPlatform platf
                 progress.Report(new("Applying patch", "Saving original files and applying BlockTheSpot", 85, false));
                 // Disk work stays off the UI thread; failed replacements restore the snapshot.
                 await Task.Run(() => patch.Apply(platform.SpotifyDirectory, staging, needsSetup));
+                // config.ini no longer blocks /desktop-update/, so the About panel keeps its version
+                // and update status; the updater itself is stopped here instead.
+                platform.SetUpdatesBlocked(true);
             }
             else
             {
@@ -101,6 +106,7 @@ public sealed class InstallerService(Downloads downloads, ISpotifyPlatform platf
                 // would only misreport the installation as patched or restore the wrong DLL later.
                 progress.Report(new("Cleaning up", "Removing previous BlockTheSpot files", 85, false));
                 await Task.Run(() => patch.Discard(platform.SpotifyDirectory));
+                platform.SetUpdatesBlocked(false);
             }
             if (request.LaunchSpotify) platform.LaunchSpotify();
             var done = request.ApplyPatch
@@ -153,6 +159,7 @@ public sealed class InstallerService(Downloads downloads, ISpotifyPlatform platf
             progress.Report(new("Restoring", "Restoring Spotify's original files", 30, false));
             await platform.StopSpotifyAsync(CancellationToken.None);
             await Task.Run(() => patch.Restore(platform.SpotifyDirectory));
+            platform.SetUpdatesBlocked(false);
             progress.Report(new("Completed", "Original Spotify files restored.", 100, false));
         }
         finally { gate.Release(); }

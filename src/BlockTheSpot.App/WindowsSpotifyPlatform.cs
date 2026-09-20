@@ -11,6 +11,10 @@ public sealed class WindowsSpotifyPlatform : ISpotifyPlatform
 {
     public string SpotifyDirectory { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Spotify");
     private string SpotifyExe => Path.Combine(SpotifyDirectory, "Spotify.exe");
+    // Spotify downloads updates into %LOCALAPPDATA%\Spotify\Update. A read-only file with that name
+    // leaves the updater unable to create the folder, so it cannot stage an update over the patch.
+    private static string UpdatePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Spotify", "Update");
     public static bool IsAdministrator => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 
     public InstalledSpotify Inspect()
@@ -93,6 +97,30 @@ public sealed class WindowsSpotifyPlatform : ISpotifyPlatform
         using var file = new PEReader(stream);
         if (file.PEHeaders.CoffHeader.Machine != Machine.Amd64)
             throw new InvalidOperationException("BlockTheSpot requires Spotify x64. Enable 'Install this Spotify version' to replace this installation.");
+    }
+
+    public void SetUpdatesBlocked(bool blocked)
+    {
+        try
+        {
+            if (blocked)
+            {
+                if (Directory.Exists(UpdatePath)) Directory.Delete(UpdatePath, true);
+                if (!File.Exists(UpdatePath))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(UpdatePath)!);
+                    File.WriteAllBytes(UpdatePath, []);
+                }
+                File.SetAttributes(UpdatePath, FileAttributes.ReadOnly);
+            }
+            else if (File.Exists(UpdatePath))
+            {
+                File.SetAttributes(UpdatePath, FileAttributes.Normal);
+                File.Delete(UpdatePath);
+            }
+        }
+        // Spotify still runs patched without this; never fail an install over the updater.
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
     public void LaunchSpotify() =>

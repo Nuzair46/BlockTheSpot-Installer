@@ -60,6 +60,10 @@ $PatchNames   = @('chrome_elf.dll', 'blockthespot.dll', 'config.ini')
 # which is the same chrome_elf.dll, blockthespot.dll and config.ini, byte for byte.
 $LegacyKit    = 'https://github.com/Nuzair46/BlockTheSpot/releases/download/v1.2.93.667-build.8'
 $BackupName   = 'chrome_elf_required.dll'
+# Spotify stages updates in %LOCALAPPDATA%\Spotify\Update. A read-only file with that name leaves
+# the updater unable to create the folder, so an update cannot land on top of the patch. config.ini
+# deliberately does not block /desktop-update/, so the About panel keeps its version and status.
+$UpdatePath   = Join-Path $env:LOCALAPPDATA 'Spotify\Update'
 
 function Write-Banner {
     Write-Host ''
@@ -110,6 +114,26 @@ function Invoke-Download($uri, $destination) {
     }
 }
 
+function Set-UpdatesBlocked([bool]$blocked) {
+    try {
+        if ($blocked) {
+            if (Test-Path $UpdatePath -PathType Container) { Remove-Item $UpdatePath -Recurse -Force }
+            if (-not (Test-Path $UpdatePath)) {
+                New-Item -ItemType Directory -Path (Split-Path $UpdatePath) -Force | Out-Null
+                New-Item -ItemType File -Path $UpdatePath -Force | Out-Null
+            }
+            Set-ItemProperty -Path $UpdatePath -Name IsReadOnly -Value $true
+            Write-Info 'Spotify auto-update blocked'
+        }
+        elseif (Test-Path $UpdatePath -PathType Leaf) {
+            Set-ItemProperty -Path $UpdatePath -Name IsReadOnly -Value $false
+            Remove-Item $UpdatePath -Force
+            Write-Info 'Spotify auto-update re-enabled'
+        }
+    }
+    catch { Write-Info "could not change the updater lock: $($_.Exception.Message)" }
+}
+
 function Stop-Spotify {
     Get-Process -Name Spotify -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 400
@@ -154,6 +178,7 @@ function Invoke-Restore {
     Remove-Item (Join-Path $SpotifyDir 'blockthespot.dll') -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $SpotifyDir 'config.ini') -ErrorAction SilentlyContinue
     Remove-Item $backup -ErrorAction SilentlyContinue
+    Set-UpdatesBlocked $false
     Write-Done 'Original Spotify files restored.'
 }
 
@@ -197,6 +222,7 @@ function Invoke-Patch {
         foreach ($name in $PatchNames) {
             Copy-Item (Join-Path $staging $name) (Join-Path $SpotifyDir $name) -Force
         }
+        Set-UpdatesBlocked $true
         Write-Done "Spotify $installed is patched with the $kit kit."
     }
     finally {
