@@ -49,6 +49,12 @@ jobs:
             echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
           echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      # A new Spotify build is where a kit silently stops matching. This says so in the run summary
+      # instead of leaving it to be discovered from a user report.
+      - name: Check the shipped kit against the newest build
+        if: steps.snapshot.outputs.changed == 'true'
+        continue-on-error: true
+        run: node scripts/check-kit.mjs
   build:
     needs: refresh
     # A manual dispatch also comes from the release watcher after it committed new observations.

@@ -66,13 +66,14 @@ The **panel** is one script plus one tag added inside `Apps/xpui.spa`; Spotify's
 
 Auto-update is stopped in the client's own request path: Spotify asks about updates at `/desktop-update/` but downloads the package from `upgrade.scdn.co/upgrade/client/`, so the kit blocks the download and leaves the status query alone. The About panel keeps its version and update status, and nothing can land on top of the patch. `%LOCALAPPDATA%\Spotify\Update` is locked as well; restoring, or turning the patch off, releases it.
 
-A kit's `config.ini` only works if its byte signatures match the Spotify build it targets. Check one before pinning a new build:
+A kit's `config.ini` only works if its byte signatures match the Spotify build it targets, and a signature that stops matching fails silently. Spotify ships the same web bundle (`Apps/xpui.spa`) on every desktop platform, so any build can be checked from the macOS package without Windows:
 
 ```sh
-tar xjf spotify-autoupdate-<version>-x86_64.tbz Contents/Resources/Apps/xpui.spa
-unzip -q -d xpui Contents/Resources/Apps/xpui.spa
-python3 scripts/verify-config.py src/BlockTheSpot.Core/Patch/current/config.ini xpui
+node scripts/check-kit.mjs             # newest build in the catalog
+node scripts/check-kit.mjs 1.3.1.234   # a specific build
 ```
+
+It downloads that build's package, reads the bundle and verifies the kit that version maps to. The catalog refresh runs it whenever a new Spotify build appears, so a kit that needs rebuilding shows up in the run summary. `scripts/verify-config.py` does the check alone against an `xpui.spa` or an extracted directory.
 
 The [version library](https://robyrew.github.io/BlockTheSpot-Installer/) is a searchable catalog of Spotify installers for Windows, macOS and Linux, with SHA-256 hashes a watcher takes from Spotify's own servers. See [docs/SPOTIFY_DOWNLOADS.md](docs/SPOTIFY_DOWNLOADS.md) for how the links and hashes are sourced.
 
