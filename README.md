@@ -29,6 +29,7 @@ That patches the Spotify you already have. More options:
 .\install.ps1 -Version latest       # install the newest Spotify, then patch
 .\install.ps1 -Version 1.2.93.667.g7b5cc0ce   # install a specific build, then patch
 .\install.ps1 -Kit legacy           # force the legacy kit
+.\install.ps1 -NoPanel              # patch, but no panel in Spotify's settings
 .\install.ps1 -Restore              # restore Spotify's original files
 ```
 
@@ -41,6 +42,7 @@ That patches the Spotify you already have. More options:
 | **Install this Spotify version** | Off keeps your installed Spotify and patches it in place. |
 | **Apply BlockTheSpot patch** | Off installs only Spotify, any version, and removes a previous patch. |
 | **Replace Microsoft Store edition** | Swaps the Store app for the desktop app (this account only). |
+| **Add BlockTheSpot panel to Spotify** | Adds a BlockTheSpot section to Spotify's settings and marks its About version as patched. Clear it (or use `-NoPanel`) to skip and remove it. |
 
 The **Method** chip on each build shows which kit it uses; the kit is always chosen from the version that will run.
 
@@ -59,6 +61,8 @@ The **Method** chip on each build shows which kit it uses; the kit is always cho
 ## How it works
 
 BlockTheSpot proxies Spotify's `chrome_elf.dll` and reads `config.ini` at startup. Spotify's ad-block hook site changed at 1.2.96, so two kits are bundled: **legacy** is the upstream Nuzair46 build; **current** is that build adapted for 1.2.96+ (`config.ini` rebuilt for the newer `xpui`). `Compatibility.Kits` maps each Spotify version to a kit — the newest kit is always the current one, and every download is checked against Spotify's Authenticode signature before setup runs.
+
+The **panel** is one script plus one tag added inside `Apps/xpui.spa`; Spotify's untouched bundle is kept beside it, so restoring is a copy back and re-running rebuilds from the original instead of stacking. The rebuilt bundle is validated before it replaces the original, and the injected script is wrapped so a selector that stops matching costs a hidden element rather than a working client.
 
 Auto-update is stopped by locking `%LOCALAPPDATA%\Spotify\Update` rather than by blocking `/desktop-update/`, so Spotify's About panel keeps showing its version and update status. Restoring, or turning the patch off, releases the lock.
 

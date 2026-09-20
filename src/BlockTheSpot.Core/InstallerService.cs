@@ -1,6 +1,6 @@
 namespace BlockTheSpot.Core;
 
-public sealed record InstallRequest(SpotifyChoice Choice, bool ReinstallSpotify, bool LaunchSpotify, bool RemoveStoreEdition, bool AllowUntested = false, bool ApplyPatch = true);
+public sealed record InstallRequest(SpotifyChoice Choice, bool ReinstallSpotify, bool LaunchSpotify, bool RemoveStoreEdition, bool AllowUntested = false, bool ApplyPatch = true, bool AddPanel = true);
 public sealed record InstalledSpotify(string? Version, bool Patched);
 public sealed record InstallProgress(string Stage, string Detail, double Percent, bool CanCancel = true);
 
@@ -22,6 +22,8 @@ public interface ISpotifyPlatform
 public sealed class InstallerService(Downloads downloads, ISpotifyPlatform platform, PatchTransaction? transaction = null)
 {
     private readonly PatchTransaction patch = transaction ?? new PatchTransaction();
+    /// <summary>Shown in the injected panel so it can name the installer that put it there.</summary>
+    public static string AppVersion { get; set; } = typeof(InstallerService).Assembly.GetName().Version?.ToString(3) ?? "dev";
     private readonly SemaphoreSlim gate = new(1, 1);
     // Any version is accepted when only Spotify is installed; the patch has its own floor per channel.
     private const string NoMinimum = "1.0.0.0";
@@ -99,6 +101,26 @@ public sealed class InstallerService(Downloads downloads, ISpotifyPlatform platf
                 // config.ini no longer blocks /desktop-update/, so the About panel keeps its version
                 // and update status; the updater itself is stopped here instead.
                 platform.SetUpdatesBlocked(true);
+                if (request.AddPanel && XpuiInjection.IsAvailable(platform.SpotifyDirectory))
+                {
+                    progress.Report(new("Adding panel", "Adding the BlockTheSpot panel to Spotify's settings", 92, false));
+                    // A failed injection leaves Spotify's own bundle in place; the patch itself is already done.
+                    try
+                    {
+                        await Task.Run(() => XpuiInjection.Apply(platform.SpotifyDirectory, new Dictionary<string, object?>
+                        {
+                            ["appVersion"] = AppVersion,
+                            ["kit"] = Compatibility.KitFor(actual)?.Id,
+                            ["spotifyVersion"] = actual,
+                            ["updatesBlocked"] = true,
+                        }));
+                    }
+                    catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+                    {
+                        progress.Report(new("Adding panel", $"Spotify's settings panel was not added: {error.Message}", 92, false));
+                    }
+                }
+                else if (!request.AddPanel) await Task.Run(() => XpuiInjection.Restore(platform.SpotifyDirectory));
             }
             else
             {
@@ -106,6 +128,7 @@ public sealed class InstallerService(Downloads downloads, ISpotifyPlatform platf
                 // would only misreport the installation as patched or restore the wrong DLL later.
                 progress.Report(new("Cleaning up", "Removing previous BlockTheSpot files", 85, false));
                 await Task.Run(() => patch.Discard(platform.SpotifyDirectory));
+                await Task.Run(() => XpuiInjection.Restore(platform.SpotifyDirectory));
                 platform.SetUpdatesBlocked(false);
             }
             if (request.LaunchSpotify) platform.LaunchSpotify();
@@ -159,6 +182,7 @@ public sealed class InstallerService(Downloads downloads, ISpotifyPlatform platf
             progress.Report(new("Restoring", "Restoring Spotify's original files", 30, false));
             await platform.StopSpotifyAsync(CancellationToken.None);
             await Task.Run(() => patch.Restore(platform.SpotifyDirectory));
+            await Task.Run(() => XpuiInjection.Restore(platform.SpotifyDirectory));
             platform.SetUpdatesBlocked(false);
             progress.Report(new("Completed", "Original Spotify files restored.", 100, false));
         }

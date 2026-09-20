@@ -23,7 +23,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private CancellationTokenSource? operation;
     private readonly Queue<string> log = new();
-    private bool busy, loading, canCancel, reinstall = true, launch = true, removeStore, showLog, showAll, applyPatch = true;
+    private bool busy, loading, canCancel, reinstall = true, launch = true, removeStore, showLog, showAll, applyPatch = true, addPanel = true;
     private IReadOnlyList<SpotifyChoice> catalogChoices = [];
     private string status = "Getting ready", detail = "Loading Spotify versions…", installedLabel = "Checking your installation…";
     private string hint = "Loading the Spotify version catalog", versionLabel = "v" + AppVersion, lastStage = "", filter = "";
@@ -50,6 +50,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// <summary>Lists every catalog build and accepts typed versions. Off, the current and legacy pins are offered.</summary>
     public bool ShowAllVersions { get => showAll; set { Set(ref showAll, value); PopulateChoices(); } }
     public bool ApplyPatch { get => applyPatch; set { Set(ref applyPatch, value); Notify(nameof(PrimaryAction)); Notify(nameof(PatchMethodLabel)); } }
+    /// <summary>Adds the BlockTheSpot section to Spotify's own settings, and an active line next to its version.</summary>
+    public bool AddPanel { get => addPanel; set => Set(ref addPanel, value); }
     public string Filter { get => filter; set { Set(ref filter, value); PopulateChoices(); } }
     public SpotifyChoice? SelectedChoice { get => selected; set { Set(ref selected, value); Notify(nameof(PatchMethodLabel)); } }
     public string Status { get => status; private set => Set(ref status, value); }
@@ -150,7 +152,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 var choice = SelectedChoice!;
                 AddLog($"Selected {choice.Title} ({choice.Badge}) from {string.Join(" → ", choice.Urls.Select(u => u.Host))}.");
-                await installer.InstallAsync(new(choice, ReinstallSpotify, LaunchSpotify, RemoveStoreEdition, ShowAllVersions, ApplyPatch), updates, cancellation.Token);
+                await installer.InstallAsync(new(choice, ReinstallSpotify, LaunchSpotify, RemoveStoreEdition, ShowAllVersions, ApplyPatch, AddPanel), updates, cancellation.Token);
             }
             Inspect();
         }

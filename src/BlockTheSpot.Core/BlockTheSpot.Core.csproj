@@ -3,6 +3,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Roots.pem" LogicalName="BlockTheSpot.Core.Roots.pem" />
     <EmbeddedResource Include="Patch/chrome_elf.dll" LogicalName="BlockTheSpot.Patch.chrome_elf.dll" />
+    <EmbeddedResource Include="Patch/blockthespot-ui.js" LogicalName="BlockTheSpot.Patch.blockthespot-ui.js" />
     <EmbeddedResource Include="Patch/legacy/blockthespot.dll" LogicalName="BlockTheSpot.Patch.legacy.blockthespot.dll" />
     <EmbeddedResource Include="Patch/legacy/config.ini" LogicalName="BlockTheSpot.Patch.legacy.config.ini" />
     <EmbeddedResource Include="Patch/current/blockthespot.dll" LogicalName="BlockTheSpot.Patch.current.blockthespot.dll" />

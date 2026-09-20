@@ -21,6 +21,9 @@
 .PARAMETER Launch
     Start Spotify when finished.
 
+.PARAMETER NoPanel
+    Skip the BlockTheSpot section in Spotify's settings (and remove it if a previous run added it).
+
 .PARAMETER Tag
     Release tag to pull the kit from. Default 'latest'.
 
@@ -42,6 +45,7 @@ param(
     [Parameter(ParameterSetName = 'Patch')][string]$Version,
     [Parameter(ParameterSetName = 'Patch')][ValidateSet('auto', 'legacy', 'current')][string]$Kit = 'auto',
     [Parameter(ParameterSetName = 'Patch')][switch]$Launch,
+    [Parameter(ParameterSetName = 'Patch')][switch]$NoPanel,
     [Parameter(ParameterSetName = 'Restore')][switch]$Restore,
     [string]$Tag = 'latest'
 )
@@ -64,6 +68,11 @@ $BackupName   = 'chrome_elf_required.dll'
 # the updater unable to create the folder, so an update cannot land on top of the patch. config.ini
 # deliberately does not block /desktop-update/, so the About panel keeps its version and status.
 $UpdatePath   = Join-Path $env:LOCALAPPDATA 'Spotify\Update'
+# The settings panel is one extra script inside Apps/xpui.spa plus a tag in its index.html.
+$SpaPath      = Join-Path $SpotifyDir 'Apps\xpui.spa'
+$SpaBackup    = "$SpaPath.bts-backup"
+$PanelName    = 'blockthespot-ui.js'
+$PanelSource  = "https://robyrew.github.io/$($Repository.Split('/')[1])/$PanelName"
 
 function Write-Banner {
     Write-Host ''
@@ -134,6 +143,77 @@ function Set-UpdatesBlocked([bool]$blocked) {
     catch { Write-Info "could not change the updater lock: $($_.Exception.Message)" }
 }
 
+function Restore-Panel {
+    if (Test-Path $SpaBackup) {
+        Copy-Item $SpaBackup $SpaPath -Force
+        Remove-Item $SpaBackup -Force
+        Write-Info 'Spotify settings panel removed'
+    }
+}
+
+# Rebuilds xpui.spa from the untouched backup with the panel added, and only swaps it in once the
+# rebuilt bundle opens cleanly and carries both the script and the tag. A corrupt bundle would stop
+# Spotify from starting, so a failure here leaves Spotify's own file in place.
+function Add-Panel($kit, $spotifyVersion) {
+    if (-not (Test-Path $SpaPath)) { Write-Info 'no xpui.spa in this installation; panel skipped'; return }
+    try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue } catch { }
+    $temp = "$SpaPath.bts-new"
+    try {
+        $panel = (Invoke-WebRequest -Uri $PanelSource -UseBasicParsing).Content
+        if ($panel -isnot [string]) { $panel = [Text.Encoding]::UTF8.GetString($panel) }
+        $info = @{ appVersion = 'install.ps1'; kit = $kit; spotifyVersion = $spotifyVersion; updatesBlocked = $true } | ConvertTo-Json -Compress
+        $script = "window.__BTS_INFO__ = $info;`n$panel"
+        $tag = '<script defer="defer" src="/' + $PanelName + '"></script>'
+
+        if (-not (Test-Path $SpaBackup)) { Copy-Item $SpaPath $SpaBackup -Force }
+        if (Test-Path $temp) { Remove-Item $temp -Force }
+
+        $source = [IO.Compression.ZipFile]::OpenRead($SpaBackup)
+        $output = [IO.Compression.ZipFile]::Open($temp, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            $expected = 0
+            foreach ($entry in $source.Entries) {
+                if ($entry.FullName -eq $PanelName) { continue }
+                $expected++
+                $copy = $output.CreateEntry($entry.FullName)
+                $reader = $entry.Open(); $writer = $copy.Open()
+                try {
+                    if ($entry.FullName -eq 'index.html') {
+                        $text = (New-Object IO.StreamReader($reader)).ReadToEnd()
+                        if ($text -notlike "*$PanelName*") {
+                            $at = $text.LastIndexOf('</body>')
+                            $text = if ($at -lt 0) { $text + $tag } else { $text.Insert($at, $tag) }
+                        }
+                        $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+                        $writer.Write($bytes, 0, $bytes.Length)
+                    }
+                    else { $reader.CopyTo($writer) }
+                }
+                finally { $writer.Dispose(); $reader.Dispose() }
+            }
+            $added = $output.CreateEntry($PanelName).Open()
+            try { $bytes = [Text.Encoding]::UTF8.GetBytes($script); $added.Write($bytes, 0, $bytes.Length) }
+            finally { $added.Dispose() }
+            $expected++
+        }
+        finally { $output.Dispose(); $source.Dispose() }
+
+        $check = [IO.Compression.ZipFile]::OpenRead($temp)
+        try {
+            $ok = ($check.Entries.Count -eq $expected) -and ($check.GetEntry($PanelName)) -and ($check.GetEntry('index.html'))
+        }
+        finally { $check.Dispose() }
+        if (-not $ok) { throw 'the rebuilt bundle did not validate' }
+
+        Move-Item $temp $SpaPath -Force
+        Write-Info 'Spotify settings panel added'
+    }
+    catch {
+        if (Test-Path $temp) { Remove-Item $temp -Force -ErrorAction SilentlyContinue }
+        Write-Info "settings panel not added: $($_.Exception.Message)"
+    }
+}
+
 function Stop-Spotify {
     Get-Process -Name Spotify -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 400
@@ -178,6 +258,7 @@ function Invoke-Restore {
     Remove-Item (Join-Path $SpotifyDir 'blockthespot.dll') -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $SpotifyDir 'config.ini') -ErrorAction SilentlyContinue
     Remove-Item $backup -ErrorAction SilentlyContinue
+    Restore-Panel
     Set-UpdatesBlocked $false
     Write-Done 'Original Spotify files restored.'
 }
@@ -223,6 +304,7 @@ function Invoke-Patch {
             Copy-Item (Join-Path $staging $name) (Join-Path $SpotifyDir $name) -Force
         }
         Set-UpdatesBlocked $true
+        if ($NoPanel) { Restore-Panel } else { Add-Panel $kit $installed }
         Write-Done "Spotify $installed is patched with the $kit kit."
     }
     finally {

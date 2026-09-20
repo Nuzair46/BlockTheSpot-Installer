@@ -2,10 +2,10 @@ name: Spotify download library
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'scripts/test-site.mjs', 'scripts/install.ps1', '.github/workflows/pages.yml']
+    paths: ['site/**', 'scripts/test-site.mjs', 'scripts/install.ps1', 'src/BlockTheSpot.Core/Patch/blockthespot-ui.js', '.github/workflows/pages.yml']
   pull_request:
     branches: [main]
-    paths: ['site/**', 'scripts/test-site.mjs', 'scripts/install.ps1', '.github/workflows/pages.yml']
+    paths: ['site/**', 'scripts/test-site.mjs', 'scripts/install.ps1', 'src/BlockTheSpot.Core/Patch/blockthespot-ui.js', '.github/workflows/pages.yml']
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
@@ -66,8 +66,10 @@ jobs:
       - run: npm ci --prefix site
       - name: Build Astro and static APIs
         run: npm run build --prefix site
-      - name: Publish the install script on Pages
-        run: cp scripts/install.ps1 site/dist/install.ps1
+      - name: Publish the install script and panel on Pages
+        run: |
+          cp scripts/install.ps1 site/dist/install.ps1
+          cp src/BlockTheSpot.Core/Patch/blockthespot-ui.js site/dist/blockthespot-ui.js
       - name: Verify catalog, filters, links, and built API contracts
         run: node --test scripts/test-site.mjs
       - uses: actions/configure-pages@v6

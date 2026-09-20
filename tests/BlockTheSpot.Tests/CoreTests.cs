@@ -1,8 +1,10 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.RegularExpressions;
 using BlockTheSpot.Core;
 using Xunit;
 
@@ -452,6 +454,113 @@ public sealed class TransactionTests
         public void Copy(string source, string destination)
         { if (++count == 3) throw new IOException("Simulated disk failure"); File.Copy(source, destination, true); }
         public void Delete(string path) => File.Delete(path);
+    }
+}
+
+public sealed class XpuiInjectionTests
+{
+    // A stand-in for Spotify's bundle: the entries the injection cares about plus filler.
+    private static string CreateSpa(string spotifyDirectory, string index = "<html><body><script defer=\"defer\" src=\"/xpui.js\"></script></body></html>")
+    {
+        var apps = Directory.CreateDirectory(Path.Combine(spotifyDirectory, "Apps")).FullName;
+        var spa = Path.Combine(apps, "xpui.spa");
+        using var file = new FileStream(spa, FileMode.Create);
+        using var archive = new ZipArchive(file, ZipArchiveMode.Create);
+        using (var writer = new StreamWriter(archive.CreateEntry("index.html").Open())) writer.Write(index);
+        using (var writer = new StreamWriter(archive.CreateEntry("xpui.js").Open())) writer.Write("console.log(1)");
+        using (var writer = new StreamWriter(archive.CreateEntry("xpui.css").Open())) writer.Write("body{}");
+        return spa;
+    }
+
+    private static Dictionary<string, object?> Info => new() { ["appVersion"] = "9.9.9", ["kit"] = "current", ["spotifyVersion"] = "1.3.1.234", ["updatesBlocked"] = true };
+
+    private static (string Index, string Script, int Entries) ReadSpa(string spa)
+    {
+        using var archive = ZipFile.OpenRead(spa);
+        using var index = new StreamReader(archive.GetEntry("index.html")!.Open());
+        var script = archive.GetEntry(XpuiInjection.ScriptName);
+        using var body = script is null ? StreamReader.Null : new StreamReader(script.Open());
+        return (index.ReadToEnd(), body.ReadToEnd(), archive.Entries.Count);
+    }
+
+    [Fact]
+    public void ApplyAddsTheScriptAndTagAndKeepsSpotifysOwnBundle()
+    {
+        using var directory = new TemporaryDirectory();
+        var spa = CreateSpa(directory.Path);
+        var original = File.ReadAllBytes(spa);
+        Assert.False(XpuiInjection.IsInjected(directory.Path));
+
+        XpuiInjection.Apply(directory.Path, Info);
+
+        var (index, script, entries) = ReadSpa(spa);
+        Assert.Equal(4, entries);
+        Assert.Contains($"src=\"/{XpuiInjection.ScriptName}\"", index);
+        Assert.EndsWith("</body></html>", index);
+        Assert.Contains("\"appVersion\":\"9.9.9\"", script);
+        Assert.Contains("\"kit\":\"current\"", script);
+        Assert.Contains("BlockTheSpot is active", script);
+        Assert.True(XpuiInjection.IsInjected(directory.Path));
+        // The pristine bundle is kept, byte for byte, for restoring.
+        Assert.Equal(original, File.ReadAllBytes(XpuiInjection.BackupPath(directory.Path)));
+    }
+
+    [Fact]
+    public void ApplyingTwiceRebuildsFromTheBackupInsteadOfStacking()
+    {
+        using var directory = new TemporaryDirectory();
+        var spa = CreateSpa(directory.Path);
+        XpuiInjection.Apply(directory.Path, Info);
+        XpuiInjection.Apply(directory.Path, new Dictionary<string, object?> { ["appVersion"] = "1.0.0" });
+
+        var (index, script, entries) = ReadSpa(spa);
+        Assert.Equal(4, entries);
+        Assert.Single(Regex.Matches(index, Regex.Escape(XpuiInjection.ScriptName)));
+        Assert.Contains("\"appVersion\":\"1.0.0\"", script);
+        Assert.DoesNotContain("9.9.9", script);
+    }
+
+    [Fact]
+    public void RestorePutsSpotifysBundleBackAndIsSafeToRepeat()
+    {
+        using var directory = new TemporaryDirectory();
+        var spa = CreateSpa(directory.Path);
+        var original = File.ReadAllBytes(spa);
+        XpuiInjection.Apply(directory.Path, Info);
+        Assert.NotEqual(original, File.ReadAllBytes(spa));
+
+        XpuiInjection.Restore(directory.Path);
+        Assert.Equal(original, File.ReadAllBytes(spa));
+        Assert.False(File.Exists(XpuiInjection.BackupPath(directory.Path)));
+        Assert.False(XpuiInjection.IsInjected(directory.Path));
+        XpuiInjection.Restore(directory.Path);
+        Assert.Equal(original, File.ReadAllBytes(spa));
+    }
+
+    [Fact]
+    public void ABundleWithoutIndexHtmlIsLeftAlone()
+    {
+        using var directory = new TemporaryDirectory();
+        var apps = Directory.CreateDirectory(Path.Combine(directory.Path, "Apps")).FullName;
+        var spa = Path.Combine(apps, "xpui.spa");
+        using (var file = new FileStream(spa, FileMode.Create))
+        using (var archive = new ZipArchive(file, ZipArchiveMode.Create))
+        using (var writer = new StreamWriter(archive.CreateEntry("xpui.js").Open())) writer.Write("x");
+        var original = File.ReadAllBytes(spa);
+
+        Assert.Throws<InvalidDataException>(() => XpuiInjection.Apply(directory.Path, Info));
+        // The original must survive a refused injection, and no half-written file may be left behind.
+        Assert.Equal(original, File.ReadAllBytes(XpuiInjection.BackupPath(directory.Path)));
+        Assert.False(File.Exists(spa + ".bts-new"));
+    }
+
+    [Fact]
+    public void AMissingBundleIsReportedAndNeverAvailable()
+    {
+        using var directory = new TemporaryDirectory();
+        Assert.False(XpuiInjection.IsAvailable(directory.Path));
+        Assert.False(XpuiInjection.IsInjected(directory.Path));
+        Assert.Throws<FileNotFoundException>(() => XpuiInjection.Apply(directory.Path, Info));
     }
 }
 

@@ -5,7 +5,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
     <Deterministic>true</Deterministic>
-    <Version>0.4.3</Version>
+    <Version>0.4.4</Version>
     <Authors>BlockTheSpot contributors</Authors>
     <RepositoryUrl>https://github.com/RobyRew/BlockTheSpot-Installer</RepositoryUrl>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
