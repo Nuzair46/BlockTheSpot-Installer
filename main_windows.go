@@ -22,19 +22,14 @@ import (
 )
 
 const (
-	spotifySetupURL    = "https://download.scdn.co/SpotifyFullSetupX64.exe"
 	spotifyVersionsURL = "https://loadspot.pages.dev/versions.json"
-	releaseChromeURL   = "https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/chrome_elf.dll"
-	releaseBlockURL    = "https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/blockthespot.dll"
-	configURL          = "https://github.com/Nuzair46/BlockTheSpot/releases/latest/download/config.ini"
 
 	installerLatestReleaseAPI = "https://api.github.com/repos/Nuzair46/BlockTheSpot-Installer/releases/latest"
 	installerReleasesURL      = "https://github.com/Nuzair46/BlockTheSpot-Installer/releases/latest"
 )
 
-var installerVersion = "dev"
-
 type installOptions struct {
+	ResetSettings       bool
 	UpdateSpotify       bool
 	LaunchSpotifyOnDone bool
 	SpotifyVersion      spotifyInstallChoice
@@ -48,23 +43,19 @@ const (
 )
 
 type installer struct {
-	options          installOptions
-	minimumVersion   string
-	downloadedConfig []byte
-	logf             func(format string, args ...any)
-	setProgress      func(value int)
-	setStatus        func(status string)
-}
-
-type githubRelease struct {
-	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
+	options     installOptions
+	release     *patchRelease
+	logf        func(format string, args ...any)
+	setProgress func(value int)
+	setStatus   func(status string)
 }
 
 type installerApp struct {
 	mw              *walk.MainWindow
 	logoView        *walk.ImageView
 	updateInfo      *walk.LinkLabel
+	resetCheck      *walk.CheckBox
+	release         *patchRelease
 	updateCheck     *walk.CheckBox
 	versionCombo    *walk.ComboBox
 	launchCheck     *walk.CheckBox
@@ -137,8 +128,9 @@ func (a *installerApp) run() error {
 						},
 					},
 					TextLabel{AssignTo: &a.versionDetails, Text: "Checking the recommended version…", MinSize: Size{Width: 100}},
-					TextLabel{Text: "A different selected version will reinstall Spotify before patching.", MinSize: Size{Width: 100}},
+					TextLabel{Text: "Settings are kept. A different selected version will reinstall Spotify before patching.", MinSize: Size{Width: 100}},
 					CheckBox{AssignTo: &a.updateCheck, Text: "&Update or reinstall Spotify before patching", Checked: false},
+					CheckBox{AssignTo: &a.resetCheck, Text: "&Reset BlockTheSpot settings to defaults", Checked: false, Enabled: false},
 					CheckBox{AssignTo: &a.launchCheck, Text: "&Launch Spotify and close installer after completion", Checked: true},
 				},
 			},
@@ -276,10 +268,11 @@ func (a *installerApp) startUninstall() {
 }
 
 func (a *installerApp) startOperation(mode operationMode) {
-	if a.busy || (mode == operationInstall && a.loadingVersions) {
+	if a.busy || (mode == operationInstall && (a.loadingVersions || a.release == nil)) {
 		return
 	}
 	opts := installOptions{
+		ResetSettings:       a.resetCheck.Checked(),
 		UpdateSpotify:       a.updateCheck.Checked(),
 		LaunchSpotifyOnDone: a.launchCheck.Checked(),
 		SpotifyVersion:      a.selectedSpotifyVersion(),
@@ -294,8 +287,10 @@ func (a *installerApp) startOperation(mode operationMode) {
 		a.logfSafe("Starting installer.")
 	}
 
+	release := a.release
 	go func() {
 		ins := installer{
+			release:     release,
 			options:     opts,
 			logf:        a.logfSafe,
 			setProgress: a.setProgressSafe,
@@ -330,7 +325,8 @@ func (a *installerApp) startOperation(mode operationMode) {
 
 func (a *installerApp) setBusy(busy bool) {
 	a.busy = busy
-	a.installButton.SetEnabled(!busy && !a.loadingVersions)
+	a.installButton.SetEnabled(!busy && !a.loadingVersions && a.release != nil)
+	a.resetCheck.SetEnabled(!busy && !a.loadingVersions && a.release != nil && a.release.Compatibility.Exact)
 	a.uninstallButton.SetEnabled(!busy)
 	a.updateCheck.SetEnabled(!busy)
 	a.versionCombo.SetEnabled(!busy && !a.loadingVersions && len(a.spotifyVersions) > 0)
@@ -384,19 +380,23 @@ func (a *installerApp) setUpdateInfo(text string) {
 }
 
 func (a *installerApp) loadSpotifyVersionChoices() {
-	_, choices, selectedIndex, err := fetchSpotifyInstallChoices()
+	release, choices, selectedIndex, err := fetchSpotifyInstallChoices()
 	if err != nil {
 		a.logfSafe("Warning: failed to load Spotify version list: %v", err)
 	}
 
 	a.mw.Synchronize(func() {
 		a.loadingVersions = false
+		a.release = release
 		defer a.setBusy(a.busy)
 		if err != nil {
-			a.versionDetails.SetText("Version list unavailable. Retry, or install using the latest official Spotify x64 download.")
+			a.versionDetails.SetText("Unable to load a compatible download. Retry, or patch an already compatible Spotify installation.")
+			if release == nil {
+				a.versionDetails.SetText("Unable to load the patch release. Use Retry before installing.")
+			}
 			a.spotifyVersions = nil
 			if a.versionCombo != nil {
-				_ = a.versionCombo.SetModel([]string{"Latest official Spotify x64"})
+				_ = a.versionCombo.SetModel([]string{"No compatible download available"})
 				_ = a.versionCombo.SetCurrentIndex(0)
 				a.versionCombo.SetEnabled(false)
 			}
@@ -459,112 +459,99 @@ func (i *installer) runInstall() error {
 	if spotifyDir == "" {
 		return errors.New("unable to determine Spotify directory")
 	}
+	if i.release == nil {
+		return errors.New("load the BlockTheSpot release with Retry first")
+	}
+	compatibility := i.release.Compatibility
+	i.setStatus("Downloading BlockTheSpot")
+	i.logf("Using BlockTheSpot release %s for Spotify %s (exact match: %t).", i.release.Tag, compatibility.Version, compatibility.Exact)
+	files, err := i.release.downloadFiles(downloadBytes)
+	if err != nil {
+		return err
+	}
+	if err := validatePatchDLLs(files); err != nil {
+		return err
+	}
+	if compatibility.Exact {
+		settings, message, err := prepareSettings(spotifyDir, files["settings.example.ini"], i.options.ResetSettings)
+		if err != nil {
+			return err
+		}
+		files["settings.ini"] = settings
+		i.logf("%s", message)
+	} else {
+		i.logf("This older release does not support settings.ini; any existing settings.ini will be preserved.")
+	}
+	i.setProgress(15)
+
+	spotifyExe := filepath.Join(spotifyDir, "Spotify.exe")
+	selected := i.options.SpotifyVersion
+	detected := ""
+	if fileExists(spotifyExe) {
+		detected, err = getSpotifyVersion(spotifyExe)
+		if err != nil {
+			i.logf("Unable to read installed Spotify version: %v", err)
+		}
+		i.logf("Installed Spotify version: %s.", detected)
+	}
+	needsInstall := i.options.UpdateSpotify || !compatibility.supports(detected) ||
+		(selected.BaseVersion != "" && baseSpotifyVersion(detected) != selected.BaseVersion)
+	if needsInstall && (selected.URL == "" || !compatibility.supports(selected.BaseVersion)) {
+		return fmt.Errorf("Spotify %s is required by this patch release. Retry the version list, or install a compatible version before patching", compatibility.Version)
+	}
 
 	i.setStatus("Stopping Spotify")
-	i.setProgress(5)
 	i.logf("Stopping Spotify processes.")
 	stopSpotifyProcesses()
 
 	i.setStatus("Checking Store edition")
-	i.setProgress(12)
 	storeInstalled, err := isSpotifyStoreInstalled()
 	if err != nil {
 		i.logf("Warning: failed to check Microsoft Store Spotify: %v", err)
 	} else if storeInstalled {
-		i.logf("Microsoft Store Spotify detected.")
 		i.logf("Uninstalling Microsoft Store Spotify.")
 		if err := uninstallSpotifyStore(); err != nil {
 			return fmt.Errorf("failed to uninstall Microsoft Store Spotify: %w", err)
 		}
-		i.logf("Microsoft Store Spotify removed.")
-	} else {
-		i.logf("Microsoft Store Spotify not detected.")
 	}
-
-	i.setStatus("Loading config")
-	i.setProgress(15)
-	if err := i.loadConfig(); err != nil {
-		return err
-	}
-	i.logf("Minimum supported Spotify version from config.ini: %s", i.minimumVersion)
-
-	spotifyExe := filepath.Join(spotifyDir, "Spotify.exe")
-	spotifyInstalled := fileExists(spotifyExe)
-	selectedVersion := i.options.SpotifyVersion
-	selectedBaseVersion := selectedVersion.BaseVersion
-	if selectedBaseVersion == "" && selectedVersion.FullVersion != "" {
-		selectedBaseVersion = baseSpotifyVersion(selectedVersion.FullVersion)
-	}
-
-	detectedVersion := ""
-	unsupportedVersion := false
-	selectedVersionMismatch := false
-	if spotifyInstalled {
-		v, err := getSpotifyVersion(spotifyExe)
-		if err != nil {
-			i.logf("Warning: unable to read Spotify version: %v", err)
-		} else {
-			detectedVersion = v
-			i.logf("Detected Spotify version: %s", v)
-			unsupportedVersion = compareVersion(v, i.minimumVersion) < 0
-			if selectedBaseVersion != "" && !strings.EqualFold(baseSpotifyVersion(v), selectedBaseVersion) {
-				selectedVersionMismatch = true
-				i.logf("Installed Spotify version %s does not match selected version %s; reinstall will be forced.", v, selectedVersion.FullVersion)
-			}
-		}
-	}
-
-	if unsupportedVersion {
-		i.logf(
-			"Spotify version %s is below supported minimum %s",
-			detectedVersion,
-			i.minimumVersion,
-		)
-	}
-
-	if unsupportedVersion && !i.options.UpdateSpotify && !selectedVersionMismatch {
-		return fmt.Errorf(
-			"Spotify version %s is below supported minimum %s. Enable 'Update or reinstall Spotify before patching' and run again",
-			detectedVersion,
-			i.minimumVersion,
-		)
-	}
-
-	needsInstall := !spotifyInstalled || i.options.UpdateSpotify || selectedVersionMismatch
 	if needsInstall {
-		if selectedVersion.FullVersion != "" {
-			i.logf("Selected Spotify version for install: %s", selectedVersion.FullVersion)
-		} else {
-			i.logf("Spotify version list unavailable; using latest official Spotify x64 installer.")
-		}
-
-		if selectedVersion.FullVersion != "" && compareVersion(selectedVersion.FullVersion, i.minimumVersion) < 0 {
-			return fmt.Errorf(
-				"selected Spotify version %s is below the recommended supported version %s",
-				selectedVersion.FullVersion,
-				i.minimumVersion,
-			)
-		}
-
 		i.setStatus("Installing Spotify")
 		i.setProgress(20)
-		if err := os.MkdirAll(spotifyDir, 0o755); err != nil {
-			return fmt.Errorf("failed to prepare Spotify directory: %w", err)
-		}
-
-		if err := i.installSpotify(spotifyExe, selectedVersion); err != nil {
+		if err := withPreservedSettings(spotifyDir, func() error { return i.installSpotify(spotifyExe, selected) }); err != nil {
 			return err
 		}
 	} else {
 		i.logf("Spotify update not required.")
 		i.setProgress(45)
 	}
-
-	i.setStatus("Applying BlockTheSpot files")
-	if err := i.patchSpotify(spotifyDir); err != nil {
+	// Setup may install something different from the requested catalog entry.
+	detected, err = getSpotifyVersion(spotifyExe)
+	if err != nil {
+		return fmt.Errorf("verify installed Spotify: %w", err)
+	}
+	if !compatibility.supports(detected) {
+		return fmt.Errorf("installed Spotify %s does not match the patch requirement %s; no patch files were installed", detected, compatibility.Version)
+	}
+	if err := requireWindowsX64(spotifyExe); err != nil {
 		return err
 	}
 
+	i.setStatus("Applying BlockTheSpot files")
+	originalPath, err := matchingOriginalDLL(spotifyDir)
+	if err != nil {
+		return err
+	}
+	original, err := os.ReadFile(originalPath)
+	if err != nil {
+		return err
+	}
+	files["chrome_elf_required.dll"] = original
+	i.logf("Using matching original DLL from %s.", originalPath)
+	if err := installPatchFiles(spotifyDir, files); err != nil {
+		return err
+	}
+	i.logf("Installed both DLLs and config.ini from %s; settings are separate from the signature pack.", i.release.Tag)
+	i.setProgress(98)
 	if i.options.LaunchSpotifyOnDone {
 		i.setStatus("Launching Spotify")
 		i.logf("Starting Spotify.")
@@ -574,12 +561,11 @@ func (i *installer) runInstall() error {
 		time.Sleep(2 * time.Second)
 		running, err := processRunning("Spotify.exe")
 		if err == nil && !running {
-			return errors.New("Spotify did not stay running after patch. Re-run install and ensure Spotify can start normally")
+			return errors.New("Spotify did not stay running after patch. Check blockthespot.log and blockthespot-status.txt in the Spotify folder")
 		}
 	}
-
 	i.setStatus("Completed")
-	i.logf("Install finished successfully.")
+	i.logf("Install finished successfully. Runtime results are in blockthespot-status.txt after Spotify starts.")
 	i.setProgress(100)
 	return nil
 }
@@ -591,53 +577,22 @@ func (i *installer) runUninstall() error {
 	}
 
 	spotifyExe := filepath.Join(spotifyDir, "Spotify.exe")
-	requiredPath := filepath.Join(spotifyDir, "chrome_elf_required.dll")
-	chromePath := filepath.Join(spotifyDir, "chrome_elf.dll")
-	blockPath := filepath.Join(spotifyDir, "blockthespot.dll")
-	configPath := filepath.Join(spotifyDir, "config.ini")
-
 	i.setStatus("Stopping Spotify")
 	i.setProgress(5)
 	i.logf("Stopping Spotify processes.")
 	stopSpotifyProcesses()
 
-	i.setStatus("Removing BlockTheSpot files")
-	i.setProgress(25)
-	if fileExists(blockPath) {
-		if err := os.Remove(blockPath); err != nil {
-			return fmt.Errorf("failed to delete blockthespot.dll: %w", err)
-		}
-		i.logf("Removed blockthespot.dll.")
-	} else {
-		i.logf("blockthespot.dll not found.")
+	i.setStatus("Restoring Spotify")
+	originalPath, err := matchingOriginalDLL(spotifyDir)
+	if err != nil {
+		return fmt.Errorf("cannot restore Spotify: %w", err)
 	}
-
-	if fileExists(configPath) {
-		if err := os.Remove(configPath); err != nil {
-			return fmt.Errorf("failed to delete config.ini: %w", err)
-		}
-		i.logf("Removed config.ini.")
-	} else {
-		i.logf("config.ini not found.")
+	if err := restoreSpotifyFiles(spotifyDir, originalPath); err != nil {
+		return err
 	}
-
-	i.setStatus("Restoring chrome_elf.dll")
-	i.setProgress(60)
-	if fileExists(requiredPath) {
-		if fileExists(chromePath) {
-			if err := os.Remove(chromePath); err != nil {
-				return fmt.Errorf("failed to delete patched chrome_elf.dll: %w", err)
-			}
-			i.logf("Removed patched chrome_elf.dll.")
-		}
-
-		if err := os.Rename(requiredPath, chromePath); err != nil {
-			return fmt.Errorf("failed to restore original chrome_elf.dll: %w", err)
-		}
-		i.logf("Restored original chrome_elf.dll.")
-	} else {
-		i.logf("chrome_elf_required.dll backup not found; restore skipped.")
-	}
+	i.logf("Restored matching original chrome_elf.dll.")
+	i.logf("Preserved settings.ini and diagnostic logs for future installs.")
+	i.setProgress(80)
 
 	if i.options.LaunchSpotifyOnDone {
 		i.setStatus("Launching Spotify")
@@ -666,11 +621,10 @@ func (i *installer) installSpotify(spotifyExe string, selectedVersion spotifyIns
 	defer os.RemoveAll(tempDir)
 
 	setupPath := filepath.Join(tempDir, "SpotifyFullSetupX64.exe")
-	downloadURL := spotifySetupURL
-	versionLabel := "latest official Spotify x64"
-	if selectedVersion.URL != "" {
-		downloadURL = selectedVersion.URL
-		versionLabel = selectedVersion.FullVersion
+	downloadURL := selectedVersion.URL
+	versionLabel := selectedVersion.FullVersion
+	if downloadURL == "" {
+		return errors.New("no compatible Spotify download selected")
 	}
 
 	i.logf("Downloading Spotify installer for %s.", versionLabel)
@@ -696,58 +650,14 @@ func (i *installer) installSpotify(spotifyExe string, selectedVersion spotifyIns
 	}
 
 	i.logf("Waiting for Spotify install/update to finish.")
-	if err := waitForFile(spotifyExe, 6*time.Minute); err != nil {
+	if err := waitForSpotifyInstall(spotifyExe, selectedVersion.BaseVersion, 6*time.Minute); err != nil {
+		stopSpotifyProcesses()
 		return err
 	}
-	_ = waitForProcess("Spotify.exe", 90*time.Second)
 
 	i.logf("Stopping Spotify after install/update.")
 	stopSpotifyProcesses()
 	i.setProgress(45)
-	return nil
-}
-
-func (i *installer) patchSpotify(spotifyDir string) error {
-	requiredPath := filepath.Join(spotifyDir, "chrome_elf_required.dll")
-	chromePath := filepath.Join(spotifyDir, "chrome_elf.dll")
-	blockPath := filepath.Join(spotifyDir, "blockthespot.dll")
-	configPath := filepath.Join(spotifyDir, "config.ini")
-
-	if err := removeIfExists(blockPath); err != nil {
-		return fmt.Errorf("failed to delete blockthespot.dll: %w", err)
-	}
-
-	switch {
-	case fileExists(requiredPath):
-		i.logf("Preserving existing chrome_elf_required.dll backup.")
-	case fileExists(chromePath):
-		if err := os.Rename(chromePath, requiredPath); err != nil {
-			return fmt.Errorf("failed to rename chrome_elf.dll to chrome_elf_required.dll: %w", err)
-		}
-		i.logf("Backed up original chrome_elf.dll to chrome_elf_required.dll.")
-	default:
-		i.logf("Warning: chrome_elf.dll was not found before patching.")
-	}
-
-	i.setProgress(60)
-	i.logf("Downloading latest chrome_elf.dll.")
-	if err := downloadFile(releaseChromeURL, chromePath); err != nil {
-		return fmt.Errorf("failed to download chrome_elf.dll: %w", err)
-	}
-
-	i.setProgress(75)
-	i.logf("Downloading latest blockthespot.dll.")
-	if err := downloadFile(releaseBlockURL, blockPath); err != nil {
-		return fmt.Errorf("failed to download blockthespot.dll: %w", err)
-	}
-
-	i.setProgress(90)
-	i.logf("Writing latest config.ini.")
-	if err := writeFileAtomically(configPath, i.downloadedConfig); err != nil {
-		return fmt.Errorf("failed to write config.ini: %w", err)
-	}
-
-	i.setProgress(98)
 	return nil
 }
 
@@ -785,22 +695,6 @@ func launchDetached(filePath string) error {
 		return err
 	}
 	return cmd.Process.Release()
-}
-
-func (i *installer) loadConfig() error {
-	body, err := downloadBytes(configURL)
-	if err != nil {
-		return fmt.Errorf("failed to download config.ini: %w", err)
-	}
-
-	version, err := extractMinimumVersionFromConfig(body)
-	if err != nil {
-		return fmt.Errorf("failed to parse minimum Spotify version from config.ini: %w", err)
-	}
-
-	i.minimumVersion = version
-	i.downloadedConfig = body
-	return nil
 }
 
 func fetchLatestInstallerRelease() (githubRelease, error) {
@@ -901,36 +795,17 @@ func parseInstallerVersion(value string) ([]int, error) {
 	return parsed, nil
 }
 
-func fetchSpotifyInstallChoices() (string, []spotifyInstallChoice, int, error) {
-	configBody, err := downloadBytes(configURL)
+func fetchSpotifyInstallChoices() (*patchRelease, []spotifyInstallChoice, int, error) {
+	release, err := fetchPatchRelease(patchLatestReleaseAPI, downloadBytes)
 	if err != nil {
-		return "", nil, -1, fmt.Errorf("failed to download config.ini: %w", err)
+		return nil, nil, -1, err
 	}
-
-	recommendedVersion, err := extractMinimumVersionFromConfig(configBody)
-	if err != nil {
-		return "", nil, -1, fmt.Errorf("failed to parse recommended Spotify version: %w", err)
-	}
-
 	body, err := downloadBytes(spotifyVersionsURL)
 	if err != nil {
-		return recommendedVersion, nil, -1, fmt.Errorf("failed to download Spotify versions list: %w", err)
+		return release, nil, -1, fmt.Errorf("failed to download Spotify versions list: %w", err)
 	}
-
-	choices, recommendedIndex, err := parseSpotifyInstallChoices(recommendedVersion, body)
-	if err != nil {
-		return recommendedVersion, nil, -1, err
-	}
-
-	return recommendedVersion, choices, recommendedIndex, nil
-}
-
-func downloadFile(url, targetPath string) error {
-	body, err := downloadBytes(url)
-	if err != nil {
-		return err
-	}
-	return writeFileAtomically(targetPath, body)
+	choices, selected, err := parseSpotifyInstallChoices(release.Compatibility, body)
+	return release, choices, selected, err
 }
 
 func downloadFileWithProgress(url, targetPath string, logf func(format string, args ...any)) error {
@@ -1013,72 +888,6 @@ func bytesToMiB(value int64) float64 {
 	return float64(value) / 1024 / 1024
 }
 
-func downloadBytes(url string) ([]byte, error) {
-	req, err := newDownloadRequest(url)
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{Timeout: 3 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("unexpected HTTP status %s", resp.Status)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func newDownloadRequest(url string) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-	return req, nil
-}
-
-func writeFileAtomically(targetPath string, body []byte) error {
-	tmpPath := targetPath + ".download"
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return err
-	}
-
-	file, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	_, copyErr := file.Write(body)
-	closeErr := file.Close()
-	if copyErr != nil {
-		_ = os.Remove(tmpPath)
-		return copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(tmpPath)
-		return closeErr
-	}
-
-	_ = os.Remove(targetPath)
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-
-	return nil
-}
-
 func stopSpotifyProcesses() {
 	processes := []string{"Spotify.exe", "SpotifyWebHelper.exe", "SpotifyFullSetup.exe", "SpotifyFullSetupX64.exe"}
 	for _, name := range processes {
@@ -1129,7 +938,7 @@ func runInstallerViaScheduledTask(setupPath string) error {
 
 func getSpotifyVersion(spotifyExe string) (string, error) {
 	escaped := strings.ReplaceAll(spotifyExe, "'", "''")
-	script := fmt.Sprintf("$vi=(Get-Item '%s').VersionInfo; $v=$vi.ProductVersion; if (-not $v) { $v=[string]$vi.ProductVersionRaw }; [string]$v", escaped)
+	script := fmt.Sprintf("$ErrorActionPreference='Stop'; $vi=(Get-Item -LiteralPath '%s').VersionInfo; '{0}.{1}.{2}.{3}' -f $vi.FileMajorPart,$vi.FileMinorPart,$vi.FileBuildPart,$vi.FilePrivatePart", escaped)
 	out, err := hiddenCommand("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("powershell failed: %v (%s)", err, strings.TrimSpace(string(out)))
@@ -1142,27 +951,18 @@ func getSpotifyVersion(spotifyExe string) (string, error) {
 	return v, nil
 }
 
-func waitForFile(path string, timeout time.Duration) error {
+func waitForSpotifyInstall(path, version string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if fileExists(path) {
-			return nil
+		if running, err := processRunning("Spotify.exe"); err == nil && running {
+			installed, err := getSpotifyVersion(path)
+			if err == nil && baseSpotifyVersion(installed) == version {
+				return nil
+			}
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("timed out waiting for %s", path)
-}
-
-func waitForProcess(name string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		running, err := processRunning(name)
-		if err == nil && running {
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return fmt.Errorf("timed out waiting for process %s", name)
+	return fmt.Errorf("Spotify setup did not start version %s before the timeout; finish setup and retry", version)
 }
 
 func processRunning(name string) (bool, error) {
@@ -1175,13 +975,6 @@ func processRunning(name string) (bool, error) {
 		return false, nil
 	}
 	return strings.Contains(strings.ToLower(line), strings.ToLower(name)), nil
-}
-
-func removeIfExists(path string) error {
-	if !fileExists(path) {
-		return nil
-	}
-	return os.Remove(path)
 }
 
 func fileExists(path string) bool {

@@ -19,7 +19,7 @@ const versionsFixture = `{
 func TestLoadspotChoicesPreserveRecommendationRules(t *testing.T) {
 	for _, recommendation := range []string{"1.2.88.483.grecommended", "1.2.88.483", "1.2.88.464"} {
 		t.Run(recommendation, func(t *testing.T) {
-			choices, selected, err := parseSpotifyInstallChoices(recommendation, []byte(versionsFixture))
+			choices, selected, err := parseSpotifyInstallChoices(spotifyCompatibility{Version: recommendation}, []byte(versionsFixture))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,7 +63,7 @@ func TestLoadspotRejectsUnusableCatalogs(t *testing.T) {
 		"not installer":        `{"1.3.0.1":{"fullversion":"1.3.0.1.ghash","win":{"x64":{"url":"https://example.com/setup.tbz"}}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			choices, selected, err := parseSpotifyInstallChoices("1.2.88.483", []byte(body))
+			choices, selected, err := parseSpotifyInstallChoices(spotifyCompatibility{Version: "1.2.88.483"}, []byte(body))
 			if err == nil || len(choices) != 0 || selected != -1 {
 				t.Fatalf("got choices=%v selected=%d err=%v", choices, selected, err)
 			}
@@ -73,7 +73,7 @@ func TestLoadspotRejectsUnusableCatalogs(t *testing.T) {
 
 func TestLoadspotNoSupportedVersion(t *testing.T) {
 	for _, recommendation := range []string{"1.4.0.0", "", "invalid"} {
-		if _, _, err := parseSpotifyInstallChoices(recommendation, []byte(versionsFixture)); err == nil {
+		if _, _, err := parseSpotifyInstallChoices(spotifyCompatibility{Version: recommendation}, []byte(versionsFixture)); err == nil {
 			t.Fatalf("expected error for recommendation %q", recommendation)
 		}
 	}
@@ -81,7 +81,7 @@ func TestLoadspotNoSupportedVersion(t *testing.T) {
 
 func TestLoadspotSkipsInvalidEntriesAlongsideValidOnes(t *testing.T) {
 	body := strings.Replace(versionsFixture, "https://example.com/newest-x64.exe", "https://example.com/not-an-installer", 1)
-	choices, selected, err := parseSpotifyInstallChoices("1.2.88.483", []byte(body))
+	choices, selected, err := parseSpotifyInstallChoices(spotifyCompatibility{Version: "1.2.88.483"}, []byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +91,58 @@ func TestLoadspotSkipsInvalidEntriesAlongsideValidOnes(t *testing.T) {
 }
 
 func TestRecommendationComesFromConfig(t *testing.T) {
-	got, err := extractMinimumVersionFromConfig([]byte("; BlockTheSpot\r\n; 1.2.88.464\r\n[settings]\r\n"))
-	if err != nil || got != "1.2.88.464" {
-		t.Fatalf("version=%q err=%v", got, err)
+	got, err := compatibilityFromConfig([]byte("; BlockTheSpot\r\n; 1.2.88.464\r\n[settings]\r\n"))
+	if err != nil || got.Version != "1.2.88.464" || got.Exact {
+		t.Fatalf("version=%+v err=%v", got, err)
 	}
-	if _, err := extractMinimumVersionFromConfig([]byte("[settings]\n")); err == nil {
+	if _, err := compatibilityFromConfig([]byte("[settings]\n")); err == nil {
 		t.Fatal("expected missing marker error")
+	}
+}
+
+func TestExactCompatibilityRejectsNewerFallback(t *testing.T) {
+	compatibility := spotifyCompatibility{Version: "1.2.88.483", Exact: true}
+	choices, selected, err := parseSpotifyInstallChoices(compatibility, []byte(versionsFixture))
+	if err != nil || len(choices) != 1 || selected != 0 || choices[0].BaseVersion != compatibility.Version {
+		t.Fatalf("choices=%+v selected=%d err=%v", choices, selected, err)
+	}
+	compatibility.Version = "1.2.88.464"
+	if _, _, err := parseSpotifyInstallChoices(compatibility, []byte(versionsFixture)); err == nil {
+		t.Fatal("must not substitute a newer version")
+	}
+}
+
+func TestCompatibilitySectionOverridesLegacyComment(t *testing.T) {
+	got, err := compatibilityFromConfig([]byte(";1.2.3.4\n[Compatibility]\nSpotify=1.3.1.234\n"))
+	if err != nil || !got.Exact || got.Version != "1.3.1.234" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	for version, want := range map[string]bool{"1.3.1.234": true, "1.3.1.234.ghash": true, "1.3.1.235": false, "1.2.3.4": false, "": false, "unknown": false} {
+		if actual := got.supports(version); actual != want {
+			t.Fatalf("supports(%q)=%t", version, actual)
+		}
+	}
+	for _, section := range []string{"[Compatibility]", "[Compatibility]\nSpotify=", "[Compatibility]\nSpotify=1.3.1", "[Compatibility]\nSpotify=1.3.1.234.ghash", "[Compatibility]\nSpotify=1.3.1.234\nSpotify=1.3.1.235"} {
+		if _, err := compatibilityFromConfig([]byte(";1.2.3.4\n" + section)); err == nil {
+			t.Fatalf("invalid compatibility fell back to comment: %s", section)
+		}
+	}
+}
+
+func TestOriginalDLLSelectionAfterSpotifyUpdate(t *testing.T) {
+	for _, tc := range []struct{ stock, backup, want string }{
+		{"140.0.1.2", "139.0.1.2", "chrome_elf.dll"}, // Updated stock takes precedence over stale backup.
+		{"140.0.1.2", "140.0.1.2", "chrome_elf.dll"},
+		{"0.0.0.0", "140.0.1.2", "chrome_elf_required.dll"}, // Proxy stays out of the backup.
+		{"0.0.0.0", "139.0.1.2", ""},
+		{"", "", ""},
+	} {
+		name, err := originalDLLName(map[string]string{"libcef.dll": "140.0.2+gexample+chromium-140.0.1.2", "chrome_elf.dll": tc.stock, "chrome_elf_required.dll": tc.backup})
+		if name != tc.want || (err == nil) != (tc.want != "") {
+			t.Fatalf("%+v -> %q, %v", tc, name, err)
+		}
+	}
+	if _, err := originalDLLName(map[string]string{"libcef.dll": "unknown"}); err == nil {
+		t.Fatal("accepted unknown CEF version")
 	}
 }
