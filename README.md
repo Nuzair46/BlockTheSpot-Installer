@@ -19,9 +19,10 @@ Official installer for [BlockTheSpot](https://github.com/Nuzair46/BlockTheSpot).
 4. Choose one action:
    - `Install / Patch` to install or update BlockTheSpot.
    - `Uninstall / Restore` to remove BlockTheSpot and restore original `chrome_elf.dll` when backup exists.
-5. Choose the Spotify Windows x64 version you want to install. The list only shows the recommended version from `config.ini` and newer supported versions, and the recommended one is preselected.
+5. Choose the Spotify Windows x64 version you want to install. The list comes from [Loadspot](https://loadspot.pages.dev/versions.json) and only shows Windows x64 installers at or above the recommended version from `config.ini`. The recommended version is preselected, or the nearest newer version if it is unavailable. Release date and download size appear below the selection.
 6. Enable `Update or reinstall Spotify before patching` when you want to install the selected Spotify version before patching.
-7. If `Launch Spotify and close installer after completion` is enabled, Spotify starts and the installer closes automatically.
+7. If the version list fails to load, use `Retry` or continue with the latest official Spotify x64 installer. Use `Copy log` to copy the activity log when reporting a problem.
+8. If `Launch Spotify and close installer after completion` is enabled, Spotify starts and the installer closes automatically.
 
 ## Development
 
@@ -53,3 +54,12 @@ Rebuild the `.ico`, then regenerate app resources:
 convert assets/blockthespot.png -define icon:auto-resize=256,128,64,48,32,16 assets/blockthespot.ico
 go run github.com/akavel/rsrc@v0.10.2 -manifest assets/app.manifest -ico assets/blockthespot.ico -arch amd64 -o windows_app_resources_amd64.syso
 ```
+
+### Tests
+
+```bash
+go test ./...
+go vet ./...
+```
+
+Version catalog and recommendation tests also run on Linux/macOS. Windows CI builds the installer and runs the full package checks.
