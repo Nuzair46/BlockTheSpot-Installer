@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,16 +35,31 @@ type spotifyInstallChoice struct {
 	Recommended bool
 }
 
-func parseSpotifyInstallChoices(recommendedVersion string, body []byte) ([]spotifyInstallChoice, int, error) {
+type spotifyCompatibility struct {
+	Version string
+	Exact   bool
+}
+
+func (c spotifyCompatibility) supports(version string) bool {
+	if !validSpotifyBaseVersion(baseSpotifyVersion(version)) {
+		return false
+	}
+	if c.Exact {
+		return baseSpotifyVersion(version) == c.Version
+	}
+	return compareVersion(version, c.Version) >= 0
+}
+
+func parseSpotifyInstallChoices(compatibility spotifyCompatibility, body []byte) ([]spotifyInstallChoice, int, error) {
 	var releases map[string]spotifyRelease
 	if err := json.Unmarshal(body, &releases); err != nil {
 		return nil, -1, fmt.Errorf("invalid Spotify versions JSON: %w", err)
 	}
-	return buildSpotifyInstallChoices(recommendedVersion, releases)
+	return buildSpotifyInstallChoices(compatibility, releases)
 }
 
-func buildSpotifyInstallChoices(recommendedVersion string, releases map[string]spotifyRelease) ([]spotifyInstallChoice, int, error) {
-	recommendedBase := baseSpotifyVersion(recommendedVersion)
+func buildSpotifyInstallChoices(compatibility spotifyCompatibility, releases map[string]spotifyRelease) ([]spotifyInstallChoice, int, error) {
+	recommendedBase := baseSpotifyVersion(compatibility.Version)
 	if !validSpotifyBaseVersion(recommendedBase) {
 		return nil, -1, errors.New("invalid recommended Spotify version")
 	}
@@ -54,7 +70,7 @@ func buildSpotifyInstallChoices(recommendedVersion string, releases map[string]s
 		if !validSpotifyBaseVersion(version) || baseSpotifyVersion(fullVersion) != version {
 			continue
 		}
-		if compareVersion(version, recommendedBase) < 0 {
+		if !compatibility.supports(version) {
 			continue
 		}
 		asset := release.Windows.X64
@@ -73,7 +89,7 @@ func buildSpotifyInstallChoices(recommendedVersion string, releases map[string]s
 		})
 	}
 	if len(choices) == 0 {
-		return nil, -1, errors.New("no supported Windows x64 Spotify installers found in versions list")
+		return nil, -1, fmt.Errorf("no compatible Windows x64 Spotify installer found for %s; retry later or install that version yourself", recommendedBase)
 	}
 	sort.Slice(choices, func(i, j int) bool {
 		if cmp := compareVersion(choices[i].BaseVersion, choices[j].BaseVersion); cmp != 0 {
@@ -104,7 +120,19 @@ func validSpotifyBaseVersion(value string) bool {
 	return true
 }
 
-func extractMinimumVersionFromConfig(body []byte) (string, error) {
+func compatibilityFromConfig(body []byte) (spotifyCompatibility, error) {
+	values, err := parseINI(body)
+	if err != nil {
+		return spotifyCompatibility{}, fmt.Errorf("invalid config.ini: %w", err)
+	}
+	if section, exists := values["compatibility"]; exists {
+		version := section["spotify"]
+		if !validSpotifyBaseVersion(version) {
+			return spotifyCompatibility{}, errors.New("invalid or missing [Compatibility] Spotify version")
+		}
+		return spotifyCompatibility{Version: version, Exact: true}, nil
+	}
+	// Preserve the minimum-version contract for old releases without Compatibility.
 	lines := strings.Split(string(body), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -113,37 +141,13 @@ func extractMinimumVersionFromConfig(body []byte) (string, error) {
 		}
 
 		candidate := strings.TrimSpace(strings.TrimPrefix(line, ";"))
-		if candidate == "" || !looksLikeSpotifyVersion(candidate) {
+		if !validSpotifyBaseVersion(baseSpotifyVersion(candidate)) {
 			continue
 		}
-		return candidate, nil
+		return spotifyCompatibility{Version: baseSpotifyVersion(candidate)}, nil
 	}
 
-	return "", errors.New("no Spotify version marker found")
-}
-
-func looksLikeSpotifyVersion(value string) bool {
-	if !strings.HasPrefix(value, "1.") {
-		return false
-	}
-
-	parts := strings.Split(value, ".")
-	if len(parts) < 3 {
-		return false
-	}
-
-	numericParts := 0
-	for _, part := range parts {
-		if leadingDigits(part) == "" {
-			break
-		}
-		numericParts++
-		if numericParts == 4 {
-			break
-		}
-	}
-
-	return numericParts >= 3
+	return spotifyCompatibility{}, errors.New("no Spotify version marker found")
 }
 
 func compareVersion(a, b string) int {
@@ -251,4 +255,18 @@ func isAllDigits(value string) bool {
 		}
 	}
 	return true
+}
+
+func originalDLLName(versions map[string]string) (string, error) {
+	chromium := regexp.MustCompile(`chromium-(\d+\.\d+\.\d+\.\d+)`).FindStringSubmatch(versions["libcef.dll"])
+	if len(chromium) != 2 {
+		return "", errors.New("cannot determine Spotify's Chromium version; enable Update or reinstall Spotify before patching")
+	}
+	// Spotify updates can restore stock chrome_elf.dll while leaving an old backup.
+	for _, name := range []string{"chrome_elf.dll", "chrome_elf_required.dll"} {
+		if versions[name] == chromium[1] {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("original chrome_elf.dll for Chromium %s is missing or outdated; enable Update or reinstall Spotify before patching", chromium[1])
 }
