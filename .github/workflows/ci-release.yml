@@ -42,6 +42,12 @@ jobs:
       - name: Generate Windows app resources
         run: go run github.com/akavel/rsrc@v0.10.2 -manifest assets/app.manifest -ico assets/blockthespot.ico -arch amd64 -o windows_app_resources_amd64.syso
 
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
       - name: Build installer
         run: |
           mkdir dist
