@@ -45,6 +45,22 @@ compatible installation, but the installer will not fall back to an unsupported
 latest Spotify download. If the patch release itself cannot be loaded, installation
 stays disabled until Retry succeeds. Uninstall remains available offline.
 
+Spotify downloads use Windows' `curl.exe` when available, retry once after a
+five-second delay, then try Go's HTTP client if curl still fails. Without curl,
+the HTTP client gets two attempts. Every attempt uses the same selected version's
+URL. HTTP 429 stops client fallback; `Retry-After` is respected, with longer waits
+reported for a later manual retry. The activity log includes the URL, download
+method, HTTP status, and available network/server details.
+The version-list **Retry** button remains available after a download failure so
+you can refresh a stale catalog without restarting the installer.
+
+Partial downloads are discarded between attempts. Downloads must match the
+catalog's size when provided and parse as a Windows executable before setup runs.
+Retries can recover temporary failures, but a missing file, persistent server
+outage, or DNS/network block may still require a later retry or manual installation
+of the exact required Spotify version. TLS certificate validation stays enabled
+for both download clients.
+
 Both DLLs, the signature pack, and the settings template come from one pinned
 BlockTheSpot release. New releases require `SHA256SUMS.txt`; downloads are checked
 before installed files change. Spotify's executable version and original Chromium
@@ -111,6 +127,14 @@ To check release downloads and the live version catalog without installing anyth
 ```powershell
 $env:BTS_LIVE_DOWNLOAD_TEST = '1'
 go test -run TestLiveReleaseAndCatalog -v .
+```
+
+To also download and validate the selected Spotify installer without running it
+(roughly 150 MB, removed when the test finishes):
+
+```powershell
+$env:BTS_LIVE_INSTALLER_DOWNLOAD_TEST = '1'
+go test -run TestLiveSpotifyInstallerDownload -v .
 ```
 
 The settings allowlist in `settings.go` must stay aligned with BlockTheSpot's runtime

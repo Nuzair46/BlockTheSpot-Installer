@@ -3,10 +3,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -330,7 +330,7 @@ func (a *installerApp) setBusy(busy bool) {
 	a.uninstallButton.SetEnabled(!busy)
 	a.updateCheck.SetEnabled(!busy)
 	a.versionCombo.SetEnabled(!busy && !a.loadingVersions && len(a.spotifyVersions) > 0)
-	a.retryButton.SetEnabled(!busy && !a.loadingVersions && len(a.spotifyVersions) == 0)
+	a.retryButton.SetEnabled(!busy && !a.loadingVersions)
 	a.launchCheck.SetEnabled(!busy)
 	a.exitButton.SetEnabled(!busy)
 }
@@ -628,7 +628,7 @@ func (i *installer) installSpotify(spotifyExe string, selectedVersion spotifyIns
 	}
 
 	i.logf("Downloading Spotify installer for %s.", versionLabel)
-	if err := downloadFileWithProgress(downloadURL, setupPath, i.logf); err != nil {
+	if err := downloadFileWithProgress(downloadURL, setupPath, selectedVersion.Size, i.logf); err != nil {
 		return fmt.Errorf("failed to download Spotify installer: %w", err)
 	}
 
@@ -808,84 +808,25 @@ func fetchSpotifyInstallChoices() (*patchRelease, []spotifyInstallChoice, int, e
 	return release, choices, selected, err
 }
 
-func downloadFileWithProgress(url, targetPath string, logf func(format string, args ...any)) error {
-	req, err := newDownloadRequest(url)
-	if err != nil {
-		return err
-	}
-
+func downloadFileWithProgress(address, targetPath string, expectedSize int64, logf func(format string, args ...any)) error {
 	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("unexpected HTTP status %s", resp.Status)
-	}
-
-	tmpPath := targetPath + ".download"
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return err
-	}
-
-	file, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	buf := make([]byte, 256*1024)
-	var written int64
-	nextLogAt := int64(5 * 1024 * 1024)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
-				_ = file.Close()
-				_ = os.Remove(tmpPath)
-				return writeErr
-			}
-			written += int64(n)
-			if logf != nil && written >= nextLogAt {
-				if resp.ContentLength > 0 {
-					logf("Downloaded Spotify installer: %.1f MB / %.1f MB.", bytesToMiB(written), bytesToMiB(resp.ContentLength))
-				} else {
-					logf("Downloaded Spotify installer: %.1f MB.", bytesToMiB(written))
-				}
-				nextLogAt = written + int64(5*1024*1024)
-			}
+	native := installerDownloadMethod{name: "Go HTTP", run: func(url, destination string, log downloadLogger) error {
+		return downloadInstallerHTTP(client, url, destination, log)
+	}}
+	methods := []installerDownloadMethod{native}
+	if curlPath, err := exec.LookPath("curl.exe"); err == nil {
+		command := func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+			return cmd
 		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			_ = file.Close()
-			_ = os.Remove(tmpPath)
-			return readErr
-		}
+		methods = []installerDownloadMethod{{name: "curl", run: func(url, destination string, log downloadLogger) error {
+			return downloadInstallerCurl(command, curlPath, url, destination, log)
+		}}, native}
+	} else if logf != nil {
+		logf("curl.exe is unavailable; using Go HTTP for the download.")
 	}
-
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-
-	if logf != nil {
-		logf("Spotify installer download complete: %.1f MB.", bytesToMiB(written))
-	}
-
-	_ = os.Remove(targetPath)
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-
-	return nil
-}
-
-func bytesToMiB(value int64) float64 {
-	return float64(value) / 1024 / 1024
+	return downloadSpotifyInstaller(address, targetPath, expectedSize, methods, logf, time.Sleep)
 }
 
 func stopSpotifyProcesses() {
