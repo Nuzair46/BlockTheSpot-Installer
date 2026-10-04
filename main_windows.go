@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -628,7 +627,7 @@ func (i *installer) installSpotify(spotifyExe string, selectedVersion spotifyIns
 	}
 
 	i.logf("Downloading Spotify installer for %s.", versionLabel)
-	if err := downloadFileWithProgress(downloadURL, setupPath, i.logf); err != nil {
+	if err := downloadSpotifyInstaller(selectedVersion, setupPath, i.logf); err != nil {
 		return fmt.Errorf("failed to download Spotify installer: %w", err)
 	}
 
@@ -806,86 +805,6 @@ func fetchSpotifyInstallChoices() (*patchRelease, []spotifyInstallChoice, int, e
 	}
 	choices, selected, err := parseSpotifyInstallChoices(release.Compatibility, body)
 	return release, choices, selected, err
-}
-
-func downloadFileWithProgress(url, targetPath string, logf func(format string, args ...any)) error {
-	req, err := newDownloadRequest(url)
-	if err != nil {
-		return err
-	}
-
-	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("unexpected HTTP status %s", resp.Status)
-	}
-
-	tmpPath := targetPath + ".download"
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return err
-	}
-
-	file, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	buf := make([]byte, 256*1024)
-	var written int64
-	nextLogAt := int64(5 * 1024 * 1024)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
-				_ = file.Close()
-				_ = os.Remove(tmpPath)
-				return writeErr
-			}
-			written += int64(n)
-			if logf != nil && written >= nextLogAt {
-				if resp.ContentLength > 0 {
-					logf("Downloaded Spotify installer: %.1f MB / %.1f MB.", bytesToMiB(written), bytesToMiB(resp.ContentLength))
-				} else {
-					logf("Downloaded Spotify installer: %.1f MB.", bytesToMiB(written))
-				}
-				nextLogAt = written + int64(5*1024*1024)
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			_ = file.Close()
-			_ = os.Remove(tmpPath)
-			return readErr
-		}
-	}
-
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-
-	if logf != nil {
-		logf("Spotify installer download complete: %.1f MB.", bytesToMiB(written))
-	}
-
-	_ = os.Remove(targetPath)
-	if err := os.Rename(tmpPath, targetPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
-	}
-
-	return nil
-}
-
-func bytesToMiB(value int64) float64 {
-	return float64(value) / 1024 / 1024
 }
 
 func stopSpotifyProcesses() {

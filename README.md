@@ -45,6 +45,23 @@ compatible installation, but the installer will not fall back to an unsupported
 latest Spotify download. If the patch release itself cannot be loaded, installation
 stays disabled until Retry succeeds. Uninstall remains available offline.
 
+Spotify installer downloads use up to two Windows `curl.exe` attempts, five seconds
+apart, followed by one attempt through the Windows/.NET HTTP client. If Windows
+curl is unavailable, the .NET client gets two attempts. Every attempt requests the
+same selected version and URL; this is an alternate HTTP client, not an independent
+mirror. HTTP 429 stops immediately, without switching clients or immediately
+retrying a rate-limited server. The log includes `Retry-After` when provided.
+Each request has a ten-minute deadline, follows at most five HTTPS-only redirects,
+and keeps TLS certificate verification enabled.
+
+Each attempt uses a fresh temporary file. Before setup can run, the installer must
+match the catalog's byte size (when available), pass Windows x64 PE format and
+truncation checks, have a trusted embedded Authenticode signature from **Spotify AB**,
+and contain the exact selected numeric file version. Windows signature verification
+must succeed; unsigned, corrupt, wrong-publisher, wrong-version, and unverifiable
+files are not executed. Downloads that fail validation are removed before retrying.
+A failed download never replaces an existing destination file.
+
 Both DLLs, the signature pack, and the settings template come from one pinned
 BlockTheSpot release. New releases require `SHA256SUMS.txt`; downloads are checked
 before installed files change. Spotify's executable version and original Chromium
@@ -94,10 +111,12 @@ go test ./...
 go vet ./...
 ```
 
-Release pinning/checksums, version selection, preference migration, and installation
-file tests run on Linux/macOS. Windows CI also exercises rollback with a locked DLL,
-builds the installer, and runs the full package checks. Fixtures need no Spotify files
-or network access.
+Release pinning/checksums, version selection, preference migration, installer PE and
+metadata validation, retry/fallback policy, and temporary-file recovery tests run on
+Linux/macOS. Windows CI also exercises the Windows download helpers, untrusted TLS
+rejection against a local test server, unsigned-file rejection, rollback with a locked
+DLL, and the complete installer build. The default tests need no Spotify installation
+or external network access and never run a downloaded installer.
 
 For an optional read-only check against a local patched installation on Windows:
 
